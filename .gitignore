@@ -1,0 +1,15 @@
+# External repositories (cloned, not ours)
+status-go/
+nim-sds/
+
+# Compiled binaries
+probe
+/cgotest
+*.a
+*.so
+
+# Build artifacts
+build/
+
+.aider*
+_notes.md

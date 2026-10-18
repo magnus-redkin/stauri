@@ -11,5 +11,8 @@ probe
 # Build artifacts
 build/
 
+# Tauri sidecar binaries (build artifacts)
+tauri-app/src-tauri/binaries/ 
+
 .aider*
 _notes.md

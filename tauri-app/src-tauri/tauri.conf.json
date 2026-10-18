@@ -22,6 +22,8 @@
     }
   },
   "bundle": {
+    "externalBin": ["binaries/status-backend"],
+    "resources": ["binaries/libsds.so"],
     "active": true,
     "targets": "all",
     "icon": [

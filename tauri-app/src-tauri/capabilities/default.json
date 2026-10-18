@@ -4,8 +4,18 @@
   "description": "Capability for the main window",
   "windows": ["main"],
   "permissions": [
+    "global-shortcut:allow-register",
+    "global-shortcut:allow-unregister",
     "websocket:default",
     "core:default",
-    "opener:default"
+    "core:window:allow-close",
+    "opener:default",
+    "core:webview:allow-create-webview-window",
+    "shell:allow-spawn",
+    "shell:allow-kill",
+    {
+      "identifier": "http:default",
+      "allow": [{ "url": "http://127.0.0.1:*" }]
+    }
   ]
 }

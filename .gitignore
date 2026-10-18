@@ -2,17 +2,32 @@
 status-go/
 nim-sds/
 
-# Compiled binaries
+# Compiled binaries & build artifacts
 probe
 /cgotest
 *.a
 *.so
-
-# Build artifacts
 build/
 
-# Tauri sidecar binaries (build artifacts)
-tauri-app/src-tauri/binaries/ 
+# Tauri sidecar binaries (they are build artifacts, not source)
+tauri-app/src-tauri/binaries/
 
+# Node.js / SvelteKit
+node_modules/
+.pnpm-store/
+.svelte-kit/
+build/
+dist/
+
+# Rust / Cargo
+tauri-app/src-tauri/target/
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+
+# Local notes (optional)
 .aider*
 _notes.md
+TMP/

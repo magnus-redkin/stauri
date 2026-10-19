@@ -29,10 +29,25 @@ export interface GenericEvent extends StatusEventBase {
   event: any;
 }
 
-export type StatusEvent = NodeLoginEvent | GenericEvent;
+export type StatusEvent = NodeLoginEvent | MessagesNewEvent | GenericEvent;
 
 export interface WalletBalance {
   symbol: string;
   balance: string; // wei или минимальные единицы, в виде строки
   decimals: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  chatId: string;
+  from: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface MessagesNewEvent extends StatusEventBase {
+  type: 'messages.new';
+  event: {
+    messages: ChatMessage[];
+  };
 }

@@ -96,3 +96,18 @@ export async function getSettings(port: number): Promise<any> {
     params: []
   });
 }
+
+/**
+ * Выход из текущего аккаунта (сбрасывает состояние, но не убивает процесс)
+ */
+export async function logout(port: number): Promise<any> {
+  return await statusFetch(port, "Logout", {});
+}
+
+/**
+ * Получает обновленный список аккаунтов из бэкенда
+ */
+export async function getAccountsList(port: number, dataDir: string): Promise<any[]> {
+  const data = await initializeApplication(port, dataDir);
+  return data.accounts || [];
+}

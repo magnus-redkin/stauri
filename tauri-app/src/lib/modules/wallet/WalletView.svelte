@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { startWallet, getBalances, getSettings } from '$lib/status/api';
-  import type { WalletBalance } from '$lib/status/types';
   import { formatBalance } from '$lib/utils/format';
+  import type { WalletBalance } from '$lib/status/types';
 
   let { port }: { port: number } = $props();
 
@@ -12,17 +12,25 @@
   let balances = $state<WalletBalance[]>([]);
   let isInitialized = $state(false);
 
+  // Безопасная обёртка для форматирования
+  function safeFormat(balance: string, decimals: number): string {
+    try {
+      return formatBalance(balance, decimals);
+    } catch (e) {
+      console.warn("Format error:", e);
+      return 'Error';
+    }
+  }
+
   async function initWallet() {
     if (!port) return;
     isLoading = true;
     errorMsg = '';
 
     try {
-      // 1. Запускаем сервис кошелька
       console.log("Starting wallet...");
       await startWallet(port);
 
-      // 2. Получаем настройки, чтобы узнать адрес кошелька
       const settings = await getSettings(port);
       walletAddress = settings.result?.['wallet-root-address'] || '';
 
@@ -31,18 +39,11 @@
       }
       console.log("Wallet root address:", walletAddress);
 
-      // 3. Получаем балансы
       const balanceData = await getBalances(port, [walletAddress]);
-      // console.log("Balances raw response:", JSON.stringify(balanceData, null, 2)); // Для отладки
-      console.log("Balances raw response:", balanceData);
-
-      // Пытаемся распарсить ответ в зависимости от его формы
-      // (форма может отличаться в разных версиях status-go)
-      let rawBalances: any[] = [];
+      console.log("Balances raw response:", JSON.stringify(balanceData, null, 2));
 
       if (balanceData.result && typeof balanceData.result === 'object') {
-        // result — это объект вида { "0x...": [токен1, токен2, ...] }
-        const tokensForAddress = Object.values(balanceData.result)[0] || [];
+        const tokensForAddress = Object.values(balanceData.result)[0];
 
         if (Array.isArray(tokensForAddress)) {
           balances = tokensForAddress
@@ -51,18 +52,15 @@
               balance: b.balance || '0',
               decimals: b.decimals || 18,
             }))
-          // Оставляем только токены с ненулевым балансом для чистоты UI
-          // (если хотите видеть все 21 токен, уберите фильтр)
-            .filter((b: any) => b.balance !== '0');
+            .filter((b: any) => {
+              try {
+                return BigInt(b.balance) > 0n;
+              } catch {
+                return false;
+              }
+            });
         }
       }
-
-      // Преобразуем в наш тип
-      balances = rawBalances.map((b: any) => ({
-        symbol: b.symbol || b.token?.symbol || 'Unknown',
-        balance: b.balance || b.amount || '0',
-        decimals: b.decimals || b.token?.decimals || 18,
-      })).filter(b => b.balance !== '0');
 
       isInitialized = true;
     } catch (e: any) {
@@ -73,7 +71,6 @@
     }
   }
 
-  // Запускаем при монтировании
   onMount(() => {
     initWallet();
   });
@@ -105,7 +102,7 @@
         {#each balances as bal, i (bal.symbol + i)}
           <li class="p-3 bg-gray-50 dark:bg-gray-700 rounded-lg border dark:border-gray-600 flex justify-between items-center">
             <span class="font-semibold">{bal.symbol}</span>
-            <span class="font-mono">{formatBalance(bal.balance, bal.decimals)}</span>
+            <span class="font-mono">{safeFormat(bal.balance, bal.decimals)}</span>
           </li>
         {/each}
       </ul>

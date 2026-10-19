@@ -9,35 +9,43 @@ export async function statusFetch<T>(port: number, endpoint: string, body: any):
     body: JSON.stringify(body)
   });
 
-  // Если HTTP-статус не 2xx, выбрасываем ошибку
+  // 1. Проверка HTTP-статуса
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`HTTP ${response.status}: ${errorText}`);
+    throw new Error(`HTTP ${response.status}: ${errorText.substring(0, 200)}`);
   }
 
   const text = await response.text();
 
-  // Если ответ пустой — возвращаем пустой объект (для методов вроде LoginAccount)
+  // 2. Пустой ответ (например, LoginAccount) — это нормально
   if (!text || text.trim() === '') {
     return {} as T;
   }
 
+  // 3. Парсинг JSON
   let data: any;
   try {
     data = JSON.parse(text);
   } catch (e) {
-    // Если это не JSON, значит бэкенд вернул что-то странное (например, HTML ошибки)
     throw new Error(`Invalid JSON response from ${endpoint}: ${text.substring(0, 100)}...`);
   }
 
-  // Обработка ошибок в формате JSON-RPC (CallRPC)
-  if (data.error) {
-    throw new Error(data.error.message || data.error);
-  }
+  // 4. Обработка ошибок (единый блок для JSON-RPC и обычного API)
+  if (data && data.error) {
+    let errorMessage: string;
 
-  // Обработка ошибок в формате обычного API (mobile/status.go)
-  if (data.error && typeof data.error === 'string') {
-    throw new Error(data.error);
+    if (typeof data.error === 'string') {
+      // Обычная строка ошибки (например, { "error": "incorrect password" })
+      errorMessage = data.error;
+    } else if (typeof data.error === 'object' && data.error.message) {
+      // JSON-RPC ошибка (например, { "error": { "code": -32601, "message": "..." } })
+      errorMessage = data.error.message;
+    } else {
+      // Неизвестная структура — выводим как JSON, чтобы было видно детали
+      errorMessage = JSON.stringify(data.error);
+    }
+
+    throw new Error(errorMessage);
   }
 
   return data as T;

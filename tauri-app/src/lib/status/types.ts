@@ -7,19 +7,32 @@ export interface InitializeResponse {
   accounts: any[] | null;
 }
 
-export interface LoginSettings {
-  "display-name": string;
-  "public-key": string;
-  mnemonic: string;
-  "key-uid": string;
-  // ... другие поля, которые нам понадобятся
+export interface StatusEventBase {
+  type: string;
+  timestamp: number;
 }
 
-export interface NodeLoginEvent {
-  type: "node.login";
+export interface NodeLoginEvent extends StatusEventBase {
+  type: 'node.login';
   event: {
-    settings: LoginSettings;
-    account: any;
+    error?: string;
+    settings?: {
+      'key-uid': string;
+      'display-name': string;
+      'public-key': string;
+      mnemonic: string;
+    };
   };
-  timestamp: number;
+}
+
+export interface GenericEvent extends StatusEventBase {
+  event: any;
+}
+
+export type StatusEvent = NodeLoginEvent | GenericEvent;
+
+export interface WalletBalance {
+  symbol: string;
+  balance: string; // wei или минимальные единицы, в виде строки
+  decimals: number;
 }

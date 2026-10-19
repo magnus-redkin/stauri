@@ -4,8 +4,6 @@
   "description": "Capability for the main window",
   "windows": ["main"],
   "permissions": [
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
     "websocket:default",
     "core:default",
     "core:window:allow-close",

@@ -4,18 +4,22 @@ This guide covers how to build `status-backend` in a Nix environment and prepare
 
 ## Prerequisites
 
-- [Nix](https://nixos.org/download.html) (with flakes enabled)
-- Rust & Cargo (usually managed by `rustup` or your OS package manager)
-- Node.js (v24+) & pnpm
-- `patchelf` (for Linux binary patching)
+- **Nix** (with flakes enabled)
+- **Rust** >= 1.85 (needed for `edition = "2024"`)
+- **Node.js** (v20+) & **pnpm**
+- **patchelf** (for Linux binary patching)
+- **System packages for Tauri on Linux**: `libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`.
+- **glibc >= 2.38** on the target machine (due to Nix build requirements).
 
 ## Step 1: Build `status-backend` in Nix
 
-Clone the `status-go` repository and build the backend inside the Nix development shell:
+Clone the `status-go` repository and checkout the tested version:
 
 ```bash
 git clone https://github.com/status-im/status-go.git
 cd status-go
+# IMPORTANT: Checkout the tested commit/tag for Stauri
+git checkout 766535cf3 # Replace with actual commit if needed
 nix develop --extra-experimental-features 'nix-command flakes'
 
 # Inside the Nix shell:
@@ -24,62 +28,60 @@ make statusgo
 After the build completes, you will find status-backend in status-go/build/bin/. You will also need libsds.so, which is located in the Nix store (usually under .../nim-sds-.../lib/libsds.so).
 Step 2: Prepare Binaries for Tauri
 
-Copy the binaries into tauri-app/src-tauri/binaries/ and rename status-backend with the appropriate target-triple suffix.
+Use the provided script to copy and patch the binaries:
 bash
 
-# Example for Linux x86_64
-cd tauri-app/src-tauri/binaries/
+# From the repository root (staturi/)
+chmod +x scripts/prepare-sidecar.sh
+./scripts/prepare-sidecar.sh status-go/build/bin/status-backend /nix/store/.../lib/libsds.so
 
-cp ../../../status-go/build/bin/status-backend ./status-backend-x86_64-unknown-linux-gnu
-cp /nix/store/.../lib/libsds.so ./
+This script will:
 
-# Give execution permissions
-chmod 755 status-backend-x86_64-unknown-linux-gnu libsds.so
+    Detect your target triple.
 
-Important: The binaries built in Nix are hard-linked to /nix/store. You must patch them to run outside the Nix environment:
-bash
+    Copy binaries to tauri-app/src-tauri/binaries/.
 
-patchelf --set-interpreter /lib64/ld-linux-x86-64.so.2 status-backend-x86_64-unknown-linux-gnu
-patchelf --set-rpath '$ORIGIN' status-backend-x86_64-unknown-linux-gnu
-patchelf --set-rpath '$ORIGIN' libsds.so
+    Apply patchelf (on Linux) to replace the interpreter and RPATH with $ORIGIN.
+
+    Check for unresolved or Nix dependencies.
 
 Step 3: Configure Tauri
 
-Ensure the following files are configured correctly:
-
-    tauri.conf.json: Add the sidecar to bundle:
-    json
-
-    "bundle": {
-      "externalBin": ["binaries/status-backend"],
-      "resources": ["binaries/libsds.so"],
-      ...
-    }
-
-    src-tauri/capabilities/default.json: Ensure you have the required permissions:
-    json
-
-    "permissions": [
-      "core:default",
-      "core:window:allow-close",
-      "core:webview:allow-create-webview-window",
-      "shell:allow-spawn",
-      "shell:allow-kill",
-      "websocket:default",
-      "global-shortcut:allow-register",
-      "global-shortcut:allow-unregister",
-      {
-        "identifier": "http:default",
-        "allow": [{ "url": "http://127.0.0.1:*" }]
-      }
-    ]
-
+Ensure tauri-app/src-tauri/tauri.conf.json and tauri-app/src-tauri/capabilities/default.json are configured (see the files in the repository).
 Step 4: Run Stauri
-
-Navigate to the tauri-app directory and start the development server:
 bash
 
+cd tauri-app
 pnpm install
 pnpm tauri dev
 
-The application will launch, start the sidecar backend automatically, and you can log in with your test account.
+Note: The release build (pnpm tauri build) has not been fully tested yet. Bundling libsds.so into the final package requires further investigation.
+text
+
+
+### 🧹 Шаг 3: Переименовываем шаблонные поля
+
+**В `tauri-app/src-tauri/Cargo.toml`**:
+```toml
+[package]
+name = "stauri"
+version = "0.1.0"
+description = "A lightweight desktop client for the Status ecosystem"
+authors = ["Your Name"]
+edition = "2024"
+license = "MIT" # или Apache-2.0
+
+[lib]
+name = "stauri_lib" # <-- Важно: это имя используется в main.rs
+# ...
+
+Не забудьте обновить src-tauri/src/main.rs: там строка tauri_app_lib::run() должна стать stauri_lib::run().
+
+В tauri-app/src-tauri/tauri.conf.json:
+json
+
+{
+  "productName": "Stauri",
+  "identifier": "com.magnus.stauri",
+  // ...
+}

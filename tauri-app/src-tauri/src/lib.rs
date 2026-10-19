@@ -1,19 +1,35 @@
-use tauri::Manager;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::{ShellExt, process::CommandChild};
 use std::sync::Mutex;
 use std::net::TcpListener;
-use serde_json::json;
-use tauri::{WebviewUrl, WebviewWindowBuilder};
+use serde::Serialize; // <-- Добавляем импорт
 
-// Структура для хранения процесса и выделенного порта
+// Структура для типизированного ответа
+#[derive(Serialize)]
+struct StartBackendResponse {
+    port: u16,
+    #[serde(rename = "dataDir")]
+    data_dir: String,
+}
+
 struct BackendState {
     child: Mutex<Option<CommandChild>>,
     port: Mutex<Option<u16>>,
 }
 
 #[tauri::command]
-async fn start_backend(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+async fn start_backend(app: tauri::AppHandle) -> Result<StartBackendResponse, String> {
     let state = app.state::<BackendState>();
+
+    // 0. Очистка "зомби"-процессов (Linux/macOS)
+    #[cfg(unix)]
+    {
+        let _ = std::process::Command::new("pkill")
+            .arg("-f")
+            .arg("status-backend")
+            .output();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
 
     // 1. Проверяем, не запущен ли уже процесс
     {
@@ -22,11 +38,13 @@ async fn start_backend(app: tauri::AppHandle) -> Result<serde_json::Value, Strin
             let port_lock = state.port.lock().unwrap();
             let port = port_lock.unwrap_or(0);
 
-            // Получаем путь к данным и для уже запущенного процесса
             let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
             let data_dir_str = app_data_dir.to_string_lossy().to_string();
 
-            return Ok(json!({ "port": port, "dataDir": data_dir_str }));
+            return Ok(StartBackendResponse {
+                port,
+                data_dir: data_dir_str
+            });
         }
     }
 
@@ -38,7 +56,7 @@ async fn start_backend(app: tauri::AppHandle) -> Result<serde_json::Value, Strin
         .port();
     drop(listener);
 
-    // 3. Получаем путь к директории данных (создастся автоматически при первом обращении)
+    // 3. Получаем путь к директории данных
     let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     let data_dir_str = app_data_dir.to_string_lossy().to_string();
 
@@ -74,7 +92,10 @@ async fn start_backend(app: tauri::AppHandle) -> Result<serde_json::Value, Strin
         }
     });
 
-    Ok(json!({ "port": port, "dataDir": data_dir_str }))
+    Ok(StartBackendResponse {
+        port,
+        data_dir: data_dir_str
+    })
 }
 
 
@@ -122,10 +143,10 @@ async fn open_dapp_window(app: tauri::AppHandle, url: String) -> Result<(), Stri
   Ok(())
 }
 
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  tauri::Builder::default()
-        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+    tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_websocket::init())
@@ -134,8 +155,18 @@ pub fn run() {
             child: Mutex::new(None),
             port: Mutex::new(None),
         })
-        .invoke_handler(tauri::generate_handler![greet, start_backend, stop_backend])
-        .invoke_handler(tauri::generate_handler![ greet, start_backend, stop_backend, open_dapp_window])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .invoke_handler(tauri::generate_handler![greet, start_backend, stop_backend, open_dapp_window])
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // При выходе из приложения убиваем sidecar
+                let state = app_handle.state::<BackendState>();
+                let mut child_lock = state.child.lock().unwrap();
+                if let Some(child) = child_lock.take() {
+                    let _ = child.kill();
+                    println!("[status-backend] Killed on exit");
+                }
+            }
+        });
 }

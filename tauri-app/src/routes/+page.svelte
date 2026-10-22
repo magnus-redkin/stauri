@@ -1,349 +1,271 @@
-<!-- <script lang="ts"> -->
-<!--   import WebSocket from '@tauri-apps/plugin-websocket'; -->
-<!--   import { getCurrentWindow } from '@tauri-apps/api/window'; -->
-<!--   import { -->
-<!--     startBackend, -->
-<!--     initializeApplication, -->
-<!--     createAccountAndLogin, -->
-<!--     loginAccount, -->
-<!--     stopBackend, -->
-<!--     getAccountsList -->
-<!--   } from '$lib/status/api'; -->
-<!--   import { -->
-<!--     statusState, -->
-<!--     processSignal, -->
-<!--     resetState, -->
-<!--     setAccounts, -->
-<!--     logout -->
-<!--   } from '$lib/stores/statusStore.svelte'; -->
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import WebSocket from '@tauri-apps/plugin-websocket';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
 
-<!--   let ws: WebSocket | null = null; -->
-<!--   let isConnecting = $state(false); -->
-<!--   let password = $state(''); -->
-<!--   let isProcessing = $state(false); -->
-<!--   let activeTab = $state<'chat' | 'wallet' | 'dapps'>('chat'); -->
+  import {
+    startBackend,
+    initializeApplication,
+    loginAccount,
+    createAccountAndLogin,
+    stopBackend,
+  } from '$lib/status/api';
 
-<!--   // Для создания нового аккаунта -->
-<!--   let newPassword = $state(''); -->
-<!--   let showCreateForm = $state(false); -->
+  import {
+    statusState,
+    processSignal,
+    resetState,
+    setAccounts,
+    logout
+  } from '$lib/stores/statusStore.svelte';
 
-<!--   // Выбранный аккаунт (по умолчанию первый) -->
-<!--   let selectedAccountKeyUid = $state(''); -->
+  import { PaneGroup, Pane, PaneResizer } from "paneforge";
+  import SidebarIcons from "$lib/sections/layout/SidebarIcons.svelte";
+  import ComingSoon from "$lib/sections/layout/ComingSoon.svelte";
 
-<!--   // Автофокус на поле пароля -->
-<!--   let passwordInput: HTMLInputElement | undefined = $state(); -->
+  import HomeLeft from "$lib/sections/home/HomeLeft.svelte";
+  import HomeMain from "$lib/sections/home/HomeMain.svelte";
+  import ProfileLeft from "$lib/sections/profile/ProfileLeft.svelte";
+  import ProfileMain from "$lib/sections/profile/ProfileMain.svelte";
+  import ContactsLeft from "$lib/sections/contacts/ContactsLeft.svelte";
+  import ContactsMain from "$lib/sections/contacts/ContactsMain.svelte";
+  import SettingsLeft from "$lib/sections/settings/SettingsLeft.svelte";
+  import SettingsMain from "$lib/sections/settings/SettingsMain.svelte";
+  import WalletLeft from "$lib/sections/wallet/WalletLeft.svelte";
+  import WalletMain from "$lib/sections/wallet/WalletMain.svelte";
+  import MarketMain from "$lib/sections/market/MarketMain.svelte";
 
-<!--   // Наличие аккаунта -->
-<!--   const accountExists = $derived(statusState.accounts.length > 0); -->
+  let activeSection = $state('home');
+  let ws: WebSocket | null = null;
+  let selectedAccountKeyUid = $state('');
+  let hasProfiles = $state(false);
+  let password = $state('');
+  let passwordInput: HTMLInputElement | undefined = $state();
 
-<!--   // Ctrl+Q -->
-<!--   $effect(() => { -->
-<!--     const handleKeyDown = (e: KeyboardEvent) => { -->
-<!--       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'q') { -->
-<!--         e.preventDefault(); -->
-<!--         getCurrentWindow().close(); -->
-<!--       } -->
-<!--     }; -->
-<!--     window.addEventListener('keydown', handleKeyDown); -->
-<!--     return () => window.removeEventListener('keydown', handleKeyDown); -->
-<!--   }); -->
+  // Ctrl+Q
+  $effect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'q') {
+        e.preventDefault();
+        getCurrentWindow().close();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  });
 
-<!--   // Автофокус при подключении -->
-<!--   $effect(() => { -->
-<!--     if (statusState.isConnected && !statusState.isLoggedIn && passwordInput) { -->
-<!--       setTimeout(() => passwordInput?.focus(), 50); -->
-<!--     } -->
-<!--   }); -->
+  // Автофокус при показе формы логина
+  $effect(() => {
+    if (statusState.isConnected && !statusState.isLoggedIn && passwordInput) {
+      setTimeout(() => passwordInput?.focus(), 50);
+    }
+  });
 
-<!--   // --- Вспомогательная функция для переподключения WebSocket --- -->
-<!--   async function reconnectWs(port: number) { -->
-<!--     if (ws) { -->
-<!--       try { await ws.disconnect(); } catch (e) {} -->
-<!--       ws = null; -->
-<!--     } -->
-<!--     ws = await WebSocket.connect(`ws://127.0.0.1:${port}/signals`); -->
-<!--     ws.addListener((msg) => processSignal(msg.data)); -->
-<!--   } -->
+  onMount(() => {
+    connect();
+  });
 
-<!--   async function connect() { -->
-<!--     if (ws || statusState.isConnected || isConnecting) return; -->
-<!--     isConnecting = true; -->
-<!--     statusState.errorMsg = ''; -->
+  async function reconnectWs(port: number) {
+    if (ws) {
+      try { await ws.disconnect(); } catch (e) {}
+      ws = null;
+    }
+    ws = await WebSocket.connect(`ws://127.0.0.1:${port}/signals`);
+    ws.addListener((msg) => processSignal(msg.data));
+  }
 
-<!--     try { -->
-<!--       const backendInfo = await startBackend(); -->
-<!--       statusState.backendPort = backendInfo.port; -->
-<!--       statusState.backendDataDir = backendInfo.dataDir; -->
+  async function connect() {
+    if (ws || statusState.isConnected) return;
 
-<!--       await new Promise((resolve) => setTimeout(resolve, 1500)); -->
+    statusState.isConnecting = true; // <-- Включаем спиннер
+    statusState.errorMsg = '';
 
-<!--       const initData = await initializeApplication(statusState.backendPort, statusState.backendDataDir); -->
+    try {
+      const backendInfo = await startBackend();
+      statusState.backendPort = backendInfo.port;
+      statusState.backendDataDir = backendInfo.dataDir;
 
-<!--       if (initData.accounts && initData.accounts.length > 0) { -->
-<!--         setAccounts(initData.accounts); -->
-<!--         selectedAccountKeyUid = initData.accounts[0]["key-uid"]; -->
-<!--       } -->
+      await new Promise((resolve) => setTimeout(resolve, 1500));
 
-<!--       await reconnectWs(statusState.backendPort); -->
-<!--       statusState.isConnected = true; -->
+      const initData = await initializeApplication(statusState.backendPort, statusState.backendDataDir);
 
-<!--     } catch (e: any) { -->
-<!--       statusState.errorMsg = `Connection failed: ${e.message || e}`; -->
-<!--       statusState.isConnected = false; -->
-<!--       ws = null; -->
-<!--     } finally { -->
-<!--       isConnecting = false; -->
-<!--     } -->
-<!--   } -->
+      if (initData.accounts && initData.accounts.length > 0) {
+        setAccounts(initData.accounts);
+        selectedAccountKeyUid = initData.accounts[0]["key-uid"];
+        hasProfiles = true;
+      } else {
+        hasProfiles = false;
+      }
 
-<!--   async function login() { -->
-<!--     if (!statusState.backendPort || !password || !selectedAccountKeyUid) return; -->
+      await reconnectWs(statusState.backendPort);
+      statusState.isConnected = true;
 
-<!--     isProcessing = true; -->
-<!--     statusState.errorMsg = ''; -->
+    } catch (e: any) {
+      statusState.errorMsg = `Connection failed: ${e.message || e}`;
+      statusState.isConnected = false;
+      ws = null;
+    } finally {
+      statusState.isConnecting = false; // <-- Выключаем спиннер
+    }
+  }
 
-<!--     try { -->
-<!--       await loginAccount(statusState.backendPort, password, selectedAccountKeyUid); -->
-<!--       password = ''; -->
-<!--     } catch (e: any) { -->
-<!--       statusState.errorMsg = `Login failed: ${e.message || e}`; -->
-<!--     } finally { -->
-<!--       isProcessing = false; -->
-<!--     } -->
-<!--   } -->
+  async function handleLogin() {
+    if (!statusState.backendPort || !password || !selectedAccountKeyUid) return;
 
-<!--   async function createAccount() { -->
-<!--     if (!statusState.backendPort || !statusState.backendDataDir || !password) return; -->
-<!--     isProcessing = true; -->
-<!--     statusState.errorMsg = ''; -->
+    try {
+      await loginAccount(statusState.backendPort, password, selectedAccountKeyUid);
+      password = '';
+    } catch (e: any) {
+      statusState.errorMsg = `Login failed: ${e.message || e}`;
+    }
+  }
 
-<!--     try { -->
-<!--       await createAccountAndLogin(statusState.backendPort, statusState.backendDataDir, password); -->
-<!--       password = ''; -->
-<!--     } catch (e: any) { -->
-<!--       statusState.errorMsg = `Create account failed: ${e.message || e}`; -->
-<!--     } finally { -->
-<!--       isProcessing = false; -->
-<!--     } -->
-<!--   } -->
+  async function handleCreateAccount(newPassword: string) {
+    if (!statusState.backendPort || !statusState.backendDataDir) return;
 
-<!--   async function createNewAccount() { -->
-<!--     if (!statusState.backendPort || !statusState.backendDataDir || !newPassword) return; -->
+    try {
+      await createAccountAndLogin(statusState.backendPort, statusState.backendDataDir, newPassword);
+      await stopBackend();
+      const newBackendInfo = await startBackend();
+      statusState.backendPort = newBackendInfo.port;
+      statusState.backendDataDir = newBackendInfo.dataDir;
+      await new Promise(r => setTimeout(r, 1500));
+      await reconnectWs(statusState.backendPort);
 
-<!--     isProcessing = true; -->
-<!--     statusState.errorMsg = ''; -->
+      const initData = await initializeApplication(statusState.backendPort, statusState.backendDataDir);
+      if (initData.accounts) {
+        setAccounts(initData.accounts);
+        selectedAccountKeyUid = initData.accounts[0]["key-uid"];
+        hasProfiles = true;
+      }
+    } catch (e: any) {
+      statusState.errorMsg = `Create account failed: ${e.message || e}`;
+    }
+  }
 
-<!--     try { -->
-<!--       // 1. Выходим из текущего аккаунта -->
-<!--       if (statusState.isLoggedIn) { -->
-<!--         await logout(); -->
-<!--       } -->
+  async function handleLogout() {
+    await logout();
+  }
 
-<!--       // 2. Создаем новый аккаунт -->
-<!--       await createAccountAndLogin(statusState.backendPort, statusState.backendDataDir, newPassword); -->
+  async function handleDisconnect() {
+    if (ws) {
+      try { await ws.disconnect(); } catch (e) {}
+      ws = null;
+    }
+    try {
+      await stopBackend();
+    } catch (e) {
+      console.warn("Failed to stop backend:", e);
+    }
+    resetState();
+  }
+</script>
 
-<!--       // 3. Перезапускаем sidecar, чтобы InitializeApplication увидел новый список -->
-<!--       await stopBackend(); -->
+<!-- СПИННЕР -->
+{#if statusState.isConnecting}
+  <div class="h-screen w-screen bg-background flex flex-col items-center justify-center gap-4">
+    <div class="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+    <p class="text-muted-foreground">Connecting to Status backend...</p>
+  </div>
 
-<!--       const newBackendInfo = await startBackend(); -->
-<!--       statusState.backendPort = newBackendInfo.port; -->
-<!--       statusState.backendDataDir = newBackendInfo.dataDir; -->
+<!-- ОШИБКА ПОДКЛЮЧЕНИЯ -->
+{:else if statusState.errorMsg && !statusState.isConnected}
+  <div class="h-screen w-screen bg-background flex flex-col items-center justify-center gap-4 p-6">
+    <div class="text-red-500 text-xl font-bold">Connection Error</div>
+    <p class="text-muted-foreground text-center max-w-md">{statusState.errorMsg}</p>
+    <button onclick={connect} class="px-6 py-2 bg-primary text-primary-foreground rounded-lg mt-4">Retry</button>
+  </div>
 
-<!--       await new Promise(r => setTimeout(r, 1500)); -->
+<!-- ЭКРАН ЛОГИНА (если подключен, но не залогинен) -->
+{:else if !statusState.isLoggedIn}
+  <div class="h-screen w-screen flex bg-background">
+    <!-- Левая панель с инфо о коннекте -->
+    <div class="w-1/3 border-r border-border h-full">
+       <ProfileLeft displayName="Tauri User" onDisconnect={handleDisconnect} />
+    </div>
 
-<!--       // 4. Переподключаем WebSocket к новому порту -->
-<!--       await reconnectWs(statusState.backendPort); -->
+    <!-- Правая панель с логином -->
+    <div class="flex-1 flex items-center justify-center p-6">
+      <div class="max-w-md w-full space-y-4">
+        <h2 class="text-2xl font-bold text-primary">Welcome to Stauri</h2>
 
-<!--       // 5. Заново получаем список аккаунтов -->
-<!--       const initData = await initializeApplication(statusState.backendPort, statusState.backendDataDir); -->
-<!--       if (initData.accounts) { -->
-<!--         setAccounts(initData.accounts); -->
-<!--         selectedAccountKeyUid = initData.accounts[0]["key-uid"]; -->
-<!--       } -->
+        {#if hasProfiles}
+          <div class="space-y-3">
+            <select bind:value={selectedAccountKeyUid} class="w-full h-10 border border-border rounded-md px-3 bg-background">
+              {#each statusState.accounts as acc, i (acc["key-uid"])}
+                <option value={acc["key-uid"]}>Acc {acc["key-uid"].substring(0, 8)}...</option>
+              {/each}
+            </select>
+            <input
+              bind:this={passwordInput}
+              type="password"
+              bind:value={password}
+              placeholder="Password"
+              class="w-full h-10 border border-border rounded-md px-3"
+              onkeydown={(e) => { if (e.key === 'Enter') handleLogin(); }}
+            />
+            <button onclick={handleLogin} class="w-full h-10 bg-primary text-primary-foreground rounded-md">Login</button>
+          </div>
+        {:else}
+          <input type="password" placeholder="New Password" class="w-full h-10 border border-border rounded-md px-3" id="newpass" />
+          <button onclick={() => {
+            const p = (document.getElementById('newpass') as HTMLInputElement).value;
+            if(p) handleCreateAccount(p);
+          }} class="w-full h-10 bg-primary text-primary-foreground rounded-md">Create Profile</button>
+        {/if}
+      </div>
+    </div>
+  </div>
 
-<!--       newPassword = ''; -->
-<!--       showCreateForm = false; -->
-<!--     } catch (e: any) { -->
-<!--       statusState.errorMsg = `Create account failed: ${e.message || e}`; -->
-<!--     } finally { -->
-<!--       isProcessing = false; -->
-<!--     } -->
-<!--   } -->
+<!-- ОСНОВНОЙ ИНТЕРФЕЙС (если залогинен) -->
+{:else}
+  <div class="h-screen w-screen flex bg-background text-foreground overflow-hidden font-sans">
+    <SidebarIcons bind:activeSection />
 
-<!--   async function handleLogout() { -->
-<!--     await logout(); -->
-<!--   } -->
+    <div class="flex-1 h-full overflow-hidden">
+      <PaneGroup direction="horizontal" class="h-full">
+        <!-- LEFT -->
+        <Pane defaultSize={30} minSize={20} class="h-full">
+          {#if activeSection === 'home'}
+            <HomeLeft />
+          {:else if activeSection === 'profile'}
+            <ProfileLeft displayName="Tauri User" onDisconnect={handleDisconnect} />
+          {:else if activeSection === 'contacts'}
+            <ContactsLeft />
+          {:else if activeSection === 'settings'}
+            <SettingsLeft />
+          {:else if activeSection === 'wallet'}
+            <WalletLeft onNavigate={(s) => activeSection = s} />
+          {:else if activeSection === 'market'}
+            <div class="p-4 border-r border-border bg-card h-full">
+              <div class="font-bold text-lg text-primary">Market</div>
+            </div>
+          {:else}
+            <ProfileLeft displayName="Tauri User" onDisconnect={handleDisconnect} />
+          {/if}
+        </Pane>
 
-<!--   async function disconnect() { -->
-<!--     if (ws) { -->
-<!--       try { await ws.disconnect(); } catch (e) {} -->
-<!--       ws = null; -->
-<!--     } -->
-<!--     try { -->
-<!--       await stopBackend(); -->
-<!--     } catch (e) { -->
-<!--       console.warn("Failed to stop backend:", e); -->
-<!--     } -->
-<!--     resetState(); -->
-<!--   } -->
-<!-- </script> -->
+        <PaneResizer class="w-1 bg-border hover:bg-primary transition-colors cursor-col-resize" />
 
-<!-- <div class="min-h-screen bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 p-6 font-sans"> -->
-<!--   <main class="max-w-3xl mx-auto flex flex-col items-center gap-6"> -->
-<!--     <h1 class="text-3xl font-bold mt-4">Stauri</h1> -->
-
-<!--     {#if statusState.errorMsg} -->
-<!--       <div class="w-full p-3 bg-red-100 text-red-700 rounded-lg border border-red-300">{statusState.errorMsg}</div> -->
-<!--     {/if} -->
-
-<!-- <\!-- Кнопки подключения -\-> -->
-<!--       <div class="flex items-center gap-4"> -->
-<!--         {#if !statusState.isConnected} -->
-<!--           <button onclick={connect} disabled={isConnecting} class="px-6 py-2 bg-green-600 text-white rounded-lg disabled:bg-gray-400"> -->
-<!--             {isConnecting ? 'Connecting...' : 'Connect'} -->
-<!--           </button> -->
-<!--         {:else} -->
-<!--           <button onclick={disconnect} class="px-6 py-2 bg-red-500 text-white rounded-lg">Disconnect</button> -->
-<!--           <span class="text-green-600 font-semibold"> -->
-<!--             ● Connected (Port: {statusState.backendPort}) -->
-<!--             {#if statusState.isLoggedIn && statusState.accountKeyUid} -->
-<!--               — Acc {statusState.accountKeyUid.substring(0, 8)}... -->
-<!--             {/if} -->
-<!--           </span> -->
-<!--         {/if} -->
-<!--       </div> -->
-
-<!--     <\!-- Блок авторизации -\-> -->
-<!--     {#if statusState.isConnected && !statusState.isLoggedIn} -->
-<!--       <div class="w-full bg-yellow-50 dark:bg-yellow-900/20 p-4 rounded-lg border border-yellow-200"> -->
-<!--         {#if !showCreateForm} -->
-<!--           <h3 class="font-bold mb-2"> -->
-<!--             {accountExists ? 'Welcome back! Enter your password:' : 'No accounts found. Create one?'} -->
-<!--           </h3> -->
-
-<!--           <\!-- Селектор аккаунта (если их больше одного) -\-> -->
-<!--           {#if statusState.accounts.length > 1} -->
-<!--             <div class="mb-3"> -->
-<!--               <label class="text-sm font-semibold">Select account:</label> -->
-<!--               <select bind:value={selectedAccountKeyUid} class="w-full p-2 border rounded-lg mt-1 dark:bg-gray-800 dark:border-gray-700"> -->
-<!--                 {#each statusState.accounts as acc, i (acc["key-uid"])} -->
-<!--                   <option value={acc["key-uid"]}> -->
-<!--                       Acc {acc["key-uid"].substring(0, 8)}... -->
-<!--                   </option> -->
-<!--                 {/each} -->
-<!--               </select> -->
-<!--             </div> -->
-<!--           {/if} -->
-
-<!--           <div class="flex gap-2"> -->
-<!--             <input -->
-<!--               bind:this={passwordInput} -->
-<!--               type="password" -->
-<!--               bind:value={password} -->
-<!--               placeholder="Password" -->
-<!--               class="flex-1 px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" -->
-<!--               onkeydown={(e) => { -->
-<!--                 if (e.key === 'Enter' && password) { -->
-<!--                   accountExists ? login() : createAccount(); -->
-<!--                 } -->
-<!--               }} -->
-<!--             /> -->
-<!--             {#if accountExists} -->
-<!--               <button onclick={login} disabled={isProcessing || !password} class="px-4 py-2 bg-green-600 text-white rounded-lg disabled:bg-gray-400"> -->
-<!--                 {isProcessing ? 'Logging in...' : 'Login'} -->
-<!--               </button> -->
-<!--             {:else} -->
-<!--               <button onclick={createAccount} disabled={isProcessing || !password} class="px-4 py-2 bg-blue-600 text-white rounded-lg disabled:bg-gray-400"> -->
-<!--                 {isProcessing ? 'Creating...' : 'Create Account'} -->
-<!--               </button> -->
-<!--             {/if} -->
-<!--           </div> -->
-
-<!--           {#if accountExists} -->
-<!--             <div class="mt-3 text-sm"> -->
-<!--               <button onclick={() => showCreateForm = true} class="text-blue-600 hover:underline"> -->
-<!--                 + Create a new account -->
-<!--               </button> -->
-<!--             </div> -->
-<!--           {/if} -->
-<!--         {:else} -->
-<!--           <\!-- Форма создания нового аккаунта -\-> -->
-<!--           <h3 class="font-bold mb-2">Create a new account</h3> -->
-<!--           <div class="flex gap-2"> -->
-<!--             <input -->
-<!--               type="password" -->
-<!--               bind:value={newPassword} -->
-<!--               placeholder="New Password" -->
-<!--               class="flex-1 px-3 py-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" -->
-<!--               onkeydown={(e) => { -->
-<!--                 if (e.key === 'Enter' && newPassword) { -->
-<!--                   createNewAccount(); -->
-<!--                 } -->
-<!--               }} -->
-<!--             /> -->
-<!--             <button onclick={createNewAccount} disabled={isProcessing || !newPassword} class="px-4 py-2 bg-purple-600 text-white rounded-lg disabled:bg-gray-400"> -->
-<!--               {isProcessing ? 'Creating...' : 'Create'} -->
-<!--             </button> -->
-<!--             <button onclick={() => { showCreateForm = false; newPassword = ''; }} class="px-4 py-2 bg-gray-400 text-white rounded-lg"> -->
-<!--               Cancel -->
-<!--             </button> -->
-<!--           </div> -->
-<!--         {/if} -->
-<!--       </div> -->
-<!--     {/if} -->
-
-<!--     <\!-- Основной интерфейс после входа -\-> -->
-<!--     {#if statusState.isLoggedIn} -->
-<!--       <div class="w-full bg-green-100 text-green-800 p-3 rounded-lg flex justify-between items-center"> -->
-<!--         <span>Logged in successfully!</span> -->
-<!--         <button onclick={handleLogout} class="px-4 py-1 bg-orange-500 text-white rounded-lg text-sm hover:bg-orange-600"> -->
-<!--           Logout -->
-<!--         </button> -->
-<!--       </div> -->
-
-<!--       <\!-- Вкладки -\-> -->
-<!--       <div class="flex w-full border-b dark:border-gray-700 mb-4"> -->
-<!--         <button -->
-<!--           class="px-6 py-2 font-semibold {activeTab === 'chat' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500'}" -->
-<!--           onclick={() => activeTab = 'chat'} -->
-<!--         > -->
-<!--           Chat -->
-<!--         </button> -->
-<!--         <button -->
-<!--           class="px-6 py-2 font-semibold {activeTab === 'wallet' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500'}" -->
-<!--           onclick={() => activeTab = 'wallet'} -->
-<!--         > -->
-<!--           Wallet -->
-<!--         </button> -->
-<!--         <button -->
-<!--           class="px-6 py-2 font-semibold {activeTab === 'dapps' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500'}" -->
-<!--           onclick={() => activeTab = 'dapps'} -->
-<!--         > -->
-<!--           dApps -->
-<!--         </button> -->
-<!--       </div> -->
-
-<!--       <\!-- Содержимое вкладок -\-> -->
-<!--       {#if activeTab === 'chat'} -->
-<!--         <ChatView events={statusState.events} /> -->
-<!--       {:else if activeTab === 'wallet'} -->
-<!--         {#if statusState.backendPort} -->
-<!--           <WalletView port={statusState.backendPort} /> -->
-<!--         {/if} -->
-<!--       {:else if activeTab === 'dapps'} -->
-<!--         <DappBrowserView /> -->
-<!--       {/if} -->
-
-<!--     {:else if statusState.events.length > 0} -->
-<!--       <\!-- Сырые сигналы до логина -\-> -->
-<!--       <div class="w-full bg-gray-900 text-green-400 rounded-lg p-4 max-h-96 overflow-y-auto font-mono text-sm"> -->
-<!--         <h3 class="text-white font-bold mb-2">Initial Signals ({statusState.events.length})</h3> -->
-<!--         <ul class="space-y-1"> -->
-<!--           {#each statusState.events as event, i (i)} -->
-<!--             <li class="break-all border-b border-gray-800 pb-1">{event.type}</li> -->
-<!--           {/each} -->
-<!--         </ul> -->
-<!--       </div> -->
-<!--     {/if} -->
-<!--   </main> -->
-<!-- </div> -->
+        <!-- MAIN -->
+        <Pane defaultSize={70} class="h-full bg-card">
+          {#if activeSection === 'home'}
+            <HomeMain />
+          {:else if activeSection === 'profile'}
+            <ProfileMain />
+          {:else if activeSection === 'contacts'}
+            <ContactsMain />
+          {:else if activeSection === 'settings'}
+            <SettingsMain />
+          {:else if activeSection === 'wallet'}
+            <WalletMain />
+          {:else if activeSection === 'market'}
+            <MarketMain />
+          {:else}
+            <ComingSoon />
+          {/if}
+        </Pane>
+      </PaneGroup>
+    </div>
+  </div>
+{/if}

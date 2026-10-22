@@ -3,6 +3,7 @@ import { startMessenger, logout as apiLogout } from '$lib/status/api';
 
 export const statusState = $state({
   isConnected: false,
+  isConnecting: true,
   isLoggedIn: false,
   accountKeyUid: '',
   backendPort: null as number | null,
@@ -64,6 +65,7 @@ export async function logout() {
 }
 
 export function resetState() {
+  isConnecting = false;
   statusState.isConnected = false;
   statusState.isLoggedIn = false;
   statusState.accountKeyUid = '';

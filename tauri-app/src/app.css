@@ -7,34 +7,25 @@
    БАЗОВЫЕ ПЕРЕМЕННЫЕ (СВЕТЛАЯ ТЕМА)
    ========================================= */
 :root {
-  --background: #ffffff;
+  --background: #fdfbf7;
   --foreground: #1a1a1a;
-
   --card: #ffffff;
   --card-foreground: #1a1a1a;
-
   --popover: #ffffff;
   --popover-foreground: #1a1a1a;
-
-  --primary: #1a1a1a; /* В светлой теме primary - темный (для контраста) */
+  --primary: #800000; /* Maroon */
   --primary-foreground: #ffffff;
-
-  --secondary: #f3f4f6;
+  --secondary: #f4efe6;
   --secondary-foreground: #1a1a1a;
-
-  --muted: #f3f4f6;
+  --muted: #f4efe6;
   --muted-foreground: #6b7280;
-
-  --accent: #f3f4f6;
-  --accent-foreground: #1a1a1a;
-
+  --accent: #f4efe6;
+  --accent-foreground: #800000;
   --destructive: #ef4444;
   --destructive-foreground: #ffffff;
-
   --border: #e5e7eb;
   --input: #e5e7eb;
-  --ring: #1a1a1a;
-
+  --ring: #800000;
   --radius: 0.5rem;
 }
 
@@ -116,7 +107,6 @@
   --secondary-foreground: #171717;
   --border: #e5e5e5;
   --ring: #171717;
-  /* Остальные наследуются из :root, так как они совпадают */
 }
 
 @theme inline {

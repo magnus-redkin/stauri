@@ -7,8 +7,7 @@ import { loadTranslations } from '$lib/i18n';
 import type { LayoutLoad } from './$types';
 
 export const load: LayoutLoad = async ({ url }) => {
-  // В прототипе просто берем 'en'. Позже можно брать из localStorage.
-  const initLocale = 'en';
+  const initLocale = 'en'; // Или брать из localStorage
   await loadTranslations(initLocale, url.pathname);
   return {};
 };

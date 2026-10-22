@@ -1,0 +1,6 @@
+svelte.config.js:      $lib: './src/lib'
+vite.config.js:    include: ['src/**/*.{test,spec}.{js,ts}'],
+vite.config.js:      // 3. tell Vite to ignore watching `src-tauri`
+vite.config.js:      ignored: ["**/src-tauri/**"],
+components.json:		"css": "src/app.css",
+pnpm-lock.yaml:    resolution: {integrity: sha512-0nnMyoyOLRJXfbMOilaSRcLH3Jw5z9HDNGfT/gwCPgaDjnx0i8w7vBzFLFR1f6CMLKF8gVbebmkUN3fa/kQJpQ==}

@@ -3,15 +3,32 @@ import { startMessenger, logout as apiLogout } from '$lib/status/api';
 
 export const statusState = $state({
   isConnected: false,
-  isConnecting: true,
+  isConnecting: false,
   isLoggedIn: false,
   accountKeyUid: '',
   backendPort: null as number | null,
   backendDataDir: '',
   events: [] as StatusEvent[],
   errorMsg: '',
-  accounts: [] as any[], // Храним список всех аккаунтов
+  accounts: [] as any[],
+
+  // Сетевая информация
+  networkName: 'mainnet',
+  rpcUrl: '',
+  wakuFleet: 'status.prod',
+  isTestnet: false,
 });
+
+export function setNetworkInfo(networkName: string, rpcUrl: string, wakuFleet: string, isTestnet: boolean) {
+  statusState.networkName = networkName;
+  statusState.rpcUrl = rpcUrl;
+  statusState.wakuFleet = wakuFleet;
+  statusState.isTestnet = isTestnet;
+}
+
+export function setAccounts(accounts: any[]) {
+  statusState.accounts = accounts;
+}
 
 export function processSignal(rawJson: string) {
   if (!rawJson) return;
@@ -44,10 +61,6 @@ export function processSignal(rawJson: string) {
   }
 }
 
-export function setAccounts(accounts: any[]) {
-  statusState.accounts = accounts;
-}
-
 export async function logout() {
   if (!statusState.backendPort) return;
 
@@ -57,7 +70,6 @@ export async function logout() {
     console.warn("Logout API call failed:", e);
   }
 
-  // Сбрасываем состояние текущей сессии, но оставляем accounts и backendPort
   statusState.isLoggedIn = false;
   statusState.accountKeyUid = '';
   statusState.events = [];
@@ -65,7 +77,6 @@ export async function logout() {
 }
 
 export function resetState() {
-  isConnecting = false;
   statusState.isConnected = false;
   statusState.isLoggedIn = false;
   statusState.accountKeyUid = '';
@@ -74,4 +85,8 @@ export function resetState() {
   statusState.backendDataDir = '';
   statusState.errorMsg = '';
   statusState.accounts = [];
+  statusState.networkName = 'mainnet';
+  statusState.rpcUrl = '';
+  statusState.wakuFleet = 'status.prod';
+  statusState.isTestnet = false;
 }

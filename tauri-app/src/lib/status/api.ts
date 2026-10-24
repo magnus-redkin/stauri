@@ -5,8 +5,8 @@ import type { StartBackendResponse, InitializeResponse } from "./types";
 /**
  * Запускает локальный бэкенд и возвращает порт и путь к данным
  */
-export async function startBackend(): Promise<StartBackendResponse> {
-  return await invoke<StartBackendResponse>('start_backend');
+export async function startBackend(network?: string): Promise<StartBackendResponse> {
+  return await invoke<StartBackendResponse>('start_backend', { network });
 }
 
 /**
@@ -19,9 +19,10 @@ export async function stopBackend(): Promise<void> {
 /**
  * Инициализирует приложение в указанной директории
  */
-export async function initializeApplication(port: number, dataDir: string): Promise<InitializeResponse> {
-  return await statusFetch<InitializeResponse>(port, "InitializeApplication", {
-    dataDir
+export async function initializeApplication(port: number, dataDir: string, networkId: number): Promise<any> {
+  return await statusFetch(port, "InitializeApplication", {
+    dataDir: dataDir,
+    NetworkID: networkId,
   });
 }
 
@@ -29,9 +30,10 @@ export async function initializeApplication(port: number, dataDir: string): Prom
  * Создает аккаунт и логинит в него
  */
 export async function createAccountAndLogin(port: number, dataDir: string, password: string): Promise<any> {
+  console.log("API: Вызов CreateAccountAndLogin с dataDir:", dataDir);
   return await statusFetch(port, "CreateAccountAndLogin", {
     rootDataDir: dataDir,
-    displayName: "Tauri User",
+    displayName: "Stauri User",
     password: password,
     customizationColor: "primary"
   });
@@ -40,7 +42,6 @@ export async function createAccountAndLogin(port: number, dataDir: string, passw
 /**
  * Запускает мессенджер (необходим для получения сообщений)
  */
-
 export async function startMessenger(port: number): Promise<any> {
   return await statusFetch(port, "CallRPC", {
     jsonrpc: "2.0",
@@ -50,8 +51,12 @@ export async function startMessenger(port: number): Promise<any> {
   });
 }
 
+/**
+ * Вход в существующий аккаунт
+ */
 
 export async function loginAccount(port: number, password: string, keyUid: string): Promise<any> {
+  console.log("API loginAccount:", { port, password, keyUid });
   return await statusFetch(port, "LoginAccount", {
     password: password,
     keyUid: keyUid
@@ -72,16 +77,13 @@ export async function startWallet(port: number): Promise<any> {
 
 /**
  * Получает балансы для указанных адресов.
- * В status-go для этого используется wallet_getBalances (или fetchOrGetCachedWalletBalances).
- * Параметры: массив адресов и опционально chainIds.
  */
-
 export async function getBalances(port: number, addresses: string[]): Promise<any> {
   return await statusFetch(port, "CallRPC", {
     jsonrpc: "2.0",
     id: 2,
-    method: "wallet_fetchOrGetCachedWalletBalances", // <-- правильное имя
-    params: [addresses, false] // [адреса, forceRefresh=false]
+    method: "wallet_fetchOrGetCachedWalletBalances",
+    params: [addresses, false]
   });
 }
 
@@ -98,16 +100,62 @@ export async function getSettings(port: number): Promise<any> {
 }
 
 /**
- * Выход из текущего аккаунта (сбрасывает состояние, но не убивает процесс)
+ * Выход из текущего аккаунта
  */
 export async function logout(port: number): Promise<any> {
-  return await statusFetch(port, "Logout", {});
+  // Пробуем через CallRPC, так как прямой эндпоинт Logout может быть недоступен
+  return await statusFetch(port, "CallRPC", {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "wakuext_logout",
+    params: []
+  });
 }
 
 /**
- * Получает обновленный список аккаунтов из бэкенда
+ * Получает обновленный список аккаунтов (через InitializeApplication, так как это надежнее)
  */
-export async function getAccountsList(port: number, dataDir: string): Promise<any[]> {
-  const data = await initializeApplication(port, dataDir);
+export async function getAccountsList(port: number, dataDir: string, networkId: number): Promise<any[]> {
+  const data = await initializeApplication(port, dataDir, networkId);
   return data.accounts || [];
+}
+
+/**
+ * Получает список чатов
+ */
+export async function getChats(port: number): Promise<any> {
+  return await statusFetch(port, "CallRPC", {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "wakuext_chats",
+    params: []
+  });
+}
+
+/**
+ * Получает историю сообщений для чата
+ */
+export async function getChatMessages(port: number, chatId: string, limit: number = 20): Promise<any> {
+  return await statusFetch(port, "CallRPC", {
+    jsonrpc: "2.0",
+    id: 2,
+    method: "wakuext_chatMessages",
+    params: [chatId, "", limit] // [chatId, cursor, limit]
+  });
+}
+
+/**
+ * Отправляет сообщение в чат
+ */
+export async function sendChatMessage(port: number, chatId: string, text: string): Promise<any> {
+  return await statusFetch(port, "CallRPC", {
+    jsonrpc: "2.0",
+    id: 3,
+    method: "wakuext_sendChatMessage",
+    params: [{
+      chatId: chatId,
+      text: text,
+      contentType: 1
+    }]
+  });
 }

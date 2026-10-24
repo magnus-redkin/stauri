@@ -3,6 +3,7 @@
   import { ScrollArea } from "$lib/components/ui/scroll-area/index.js";
   import { User } from "lucide-svelte";
   import { statusState } from '$lib/stores/statusStore.svelte';
+  import NetworkInfo from './NetworkInfo.svelte';
 
   let { displayName = "Tauri User", onDisconnect }: { displayName?: string, onDisconnect?: () => void } = $props();
 </script>
@@ -12,7 +13,7 @@
     {i18n.t('Profile')}
   </div>
 
-  <ScrollArea class="flex-1">
+  <ScrollArea class="flex-1 overflow-x-hidden">
     <!-- Connect Info -->
     <div class="p-4 border-b border-border bg-secondary/30">
       {#if statusState.isConnecting}
@@ -34,6 +35,9 @@
         <div class="mt-2 text-[10px] font-mono text-muted-foreground break-all">
           PubKey: {statusState.accountKeyUid ? statusState.accountKeyUid.substring(0, 10) + '...' : '...'}
         </div>
+
+        <!-- Сетевая информация -->
+        <NetworkInfo />
       {:else}
         <button class="w-full py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium">
           {i18n.t('Connect')}

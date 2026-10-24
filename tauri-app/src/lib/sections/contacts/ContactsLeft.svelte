@@ -11,7 +11,7 @@
 
 <div class="flex flex-col h-full border-r border-border bg-card">
   <div class="p-4 border-b border-border font-bold text-lg text-primary">{i18n.t('Contacts')}</div>
-  <ScrollArea class="flex-1">
+  <ScrollArea class="flex-1 overflow-x-hidden">
     <div class="p-2 space-y-1">
       {#each contacts as contact}
         <button class="w-full text-left p-3 rounded-md hover:bg-secondary flex flex-col transition-colors border border-transparent hover:border-border">

@@ -120,8 +120,13 @@ export async function getAccountsList(port: number, dataDir: string, networkId: 
   return data.accounts || [];
 }
 
+
+// ==========================================
+// ЧАТЫ
+// ==========================================
+
 /**
- * Получает список чатов
+ * Получает список чатов (личные, группы, сообщества)
  */
 export async function getChats(port: number): Promise<any> {
   return await statusFetch(port, "CallRPC", {
@@ -140,7 +145,7 @@ export async function getChatMessages(port: number, chatId: string, limit: numbe
     jsonrpc: "2.0",
     id: 2,
     method: "wakuext_chatMessages",
-    params: [chatId, "", limit] // [chatId, cursor, limit]
+    params: [chatId, "", limit]
   });
 }
 
@@ -156,6 +161,32 @@ export async function sendChatMessage(port: number, chatId: string, text: string
       chatId: chatId,
       text: text,
       contentType: 1
+    }]
+  });
+}
+
+/**
+ * Получает список контактов (включая запросы в контакты)
+ */
+export async function getContacts(port: number): Promise<any> {
+  return await statusFetch(port, "CallRPC", {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "wakuext_contacts",
+    params: []
+  });
+}
+
+/**
+ * Принимает последний запрос в контакты от указанного пользователя
+ */
+export async function acceptContactRequest(port: number, contactPublicKey: string): Promise<any> {
+  return await statusFetch(port, "CallRPC", {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "wakuext_acceptLatestContactRequestForContact",
+    params: [{
+      id: contactPublicKey
     }]
   });
 }

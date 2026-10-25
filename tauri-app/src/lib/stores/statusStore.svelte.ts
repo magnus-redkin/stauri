@@ -6,11 +6,15 @@ export const statusState = $state({
   isConnecting: false,
   isLoggedIn: false,
   accountKeyUid: '',
+  publicKey: '',
   backendPort: null as number | null,
   backendDataDir: '',
   events: [] as StatusEvent[],
   errorMsg: '',
   accounts: [] as any[],
+
+  pendingRequestsCount: 0,
+  lastMessageSignal: 0, // <-- Счётчик для триггера обновления
 
   // Сетевая информация
   networkName: 'mainnet',
@@ -36,8 +40,10 @@ export function processSignal(rawJson: string) {
   try {
     const parsed = JSON.parse(rawJson) as StatusEvent;
 
+    // Добавляем событие в массив (для отладки)
     statusState.events.push(parsed);
 
+    // Обработка node.login
     if (parsed.type === 'node.login') {
       const loginEvent = parsed as NodeLoginEvent;
 
@@ -47,6 +53,7 @@ export function processSignal(rawJson: string) {
       }
 
       statusState.accountKeyUid = loginEvent.event?.settings?.['key-uid'] || statusState.accountKeyUid;
+      statusState.publicKey = loginEvent.event?.settings?.['public-key'] || statusState.publicKey;
       statusState.isLoggedIn = true;
 
       if (statusState.backendPort) {
@@ -56,11 +63,20 @@ export function processSignal(rawJson: string) {
         });
       }
     }
+
+    // Обработка новых сообщений (для обновления UI)
+    if (parsed.type === 'messages.new') {
+      statusState.lastMessageSignal++; // <-- Триггер для перезагрузки chats/messages
+    }
+
+    // Обработка изменений в контактах (например, запрос принят)
+    if (parsed.type === 'messages.new' || parsed.type === 'contact.request.accepted') {
+      // Можно добавить дополнительную логику, если нужно
+    }
   } catch (e) {
     console.warn("Failed to parse signal:", rawJson);
   }
 }
-
 export async function logout() {
   if (!statusState.backendPort) return;
 
@@ -78,10 +94,12 @@ export async function logout() {
 
 export function resetState() {
   statusState.isConnected = false;
+  statusState.isConnecting = false;
   statusState.isLoggedIn = false;
   statusState.accountKeyUid = '';
   statusState.events = [];
   statusState.backendPort = null;
+  statusState.publicKey = '';
   statusState.backendDataDir = '';
   statusState.errorMsg = '';
   statusState.accounts = [];
@@ -89,4 +107,12 @@ export function resetState() {
   statusState.rpcUrl = '';
   statusState.wakuFleet = 'status.prod';
   statusState.isTestnet = false;
+}
+
+export function setPublicKey(key: string) {
+  statusState.publicKey = key;
+}
+
+export function setPendingRequestsCount(count: number) {
+  statusState.pendingRequestsCount = count;
 }

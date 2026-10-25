@@ -3,7 +3,6 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import WebSocket from '@tauri-apps/plugin-websocket';
 
-
   import {
     statusState,
     processSignal,
@@ -11,6 +10,8 @@
     setAccounts,
     setNetworkInfo
   } from '$lib/stores/statusStore.svelte';
+
+  import { setPendingRequestsCount } from '$lib/stores/statusStore.svelte';
 
   import {
     startBackend,
@@ -36,8 +37,13 @@
   import WalletMain from "$lib/sections/wallet/WalletMain.svelte";
   import MarketMain from "$lib/sections/market/MarketMain.svelte";
   import RecoveryScreen from '$lib/sections/auth/RecoveryScreen.svelte';
-  import ChatLeft from '$lib/sections/chat/ChatLeft.svelte';
+
+
+  import ChatLeft, { type ChatItem } from '$lib/sections/chat/ChatLeft.svelte';
   import ChatMain from '$lib/sections/chat/ChatMain.svelte';
+
+  let chats = $state<ChatItem[]>([]);
+  let selectedChat = $state<ChatItem | null>(null);
 
   let selectedChatId = $state<string | null>(null);
 
@@ -51,6 +57,15 @@
   let selectedNetwork = $state('mainnet'); // <-- Добавляем сеть
 
   let showRecovery = $state(false);
+  let allContacts = $state<any[]>([]);
+
+
+  $effect(() => {
+    // Отслеживаем lastMessageSignal
+    if (statusState.lastMessageSignal > 0 && activeSection === 'chat') {
+      loadChatsAndRequests();
+    }
+  });
 
   // Ctrl+Q (без изменений)
   $effect(() => {
@@ -69,6 +84,63 @@
     await loadAccountsForNetwork('mainnet');
   });
 
+
+  import { getChats as apiGetChats, getContacts } from '$lib/status/api';
+  import { getDisplayName } from '$lib/utils/user';
+
+
+
+  async function loadChatsAndRequests() {
+    if (!statusState.backendPort) return;
+
+    try {
+      // 1. Загружаем чаты
+      const chatsRes = await apiGetChats(statusState.backendPort);
+      const rawChats = chatsRes.result || [];
+
+      // 2. Загружаем контакты (для получения alias/displayName)
+      const contactsRes = await getContacts(statusState.backendPort);
+      allContacts = contactsRes.result || [];
+
+      // 3. Маппим чаты, подставляя имя из контактов (если есть)
+      chats = rawChats.map((c: any) => {
+        // Ищем контакт по id чата (для личных чатов id = публичный ключ собеседника)
+        const contact = allContacts.find((ct: any) => ct.id === c.id);
+
+        // Определяем имя: если есть контакт — берём из него, иначе из чата
+        const name = contact ? getDisplayName(contact) : getDisplayName(c);
+
+        // Определяем, является ли чат входящим запросом
+        const isPendingRequest = c.active === false && c.lastMessage?.contactRequestState === 1;
+
+        return {
+          id: c.id,
+          name,
+          lastMessage: c.lastMessage?.text || '',
+          type: 'status' as const,
+          isPendingRequest,
+        };
+      });
+
+      // 4. Обновляем счётчик pending-запросов для бейджа на иконке Chat
+      const pendingCount = chats.filter(c => c.isPendingRequest).length;
+      setPendingRequestsCount(pendingCount);
+
+      console.log("🟢 Chats loaded:", chats.length, "Pending:", pendingCount);
+      console.log("🔵 Raw chats:", rawChats.map(c => ({ id: c.id, name: c.name, alias: c.alias })));
+      console.log("🟣 Contacts:", allContacts.map(c => ({ id: c.id, alias: c.alias, displayName: c.displayName })));
+    } catch (e: any) {
+      console.error("Failed to load chats/requests:", e);
+      statusState.errorMsg = `Failed to load chats: ${e?.message || e}`;
+    }
+  }
+
+
+  $effect(() => {
+    if (statusState.isLoggedIn && activeSection === 'chat' && chats.length === 0) {
+      loadChatsAndRequests();
+    }
+  });
 
   async function loadAccountsForNetwork(network: string) {
     // Если уже идет подключение, не прерываем его
@@ -360,8 +432,9 @@
             <WalletLeft onNavigate={(s) => activeSection = s} />
           {:else if activeSection === 'chat'}
             <ChatLeft
-              onSelectChat={(id) => selectedChatId = id}
-              bind:selectedChatId
+              items={chats}
+              selectedChatId={selectedChat?.id || null}
+              onSelectChat={(item) => selectedChat = item}
               />
           {:else}
             <ProfileLeft displayName="Stauri User" onDisconnect={handleDisconnect} />
@@ -384,11 +457,22 @@
           {:else if activeSection === 'market'}
             <MarketMain />
           {:else if activeSection === 'chat'}
-            <ChatMain chatId={selectedChatId} />
-          {:else}
-            <HomeMain />
-          {/if}
-        </Pane>
+            <ChatMain
+              chat={selectedChat}
+              contacts={allContacts}
+              onRefresh={async () => {
+              await loadChatsAndRequests();
+              // После обновления списка ищем наш чат в новом списке
+              if (selectedChat) {
+              const updated = chats.find(c => c.id === selectedChat?.id);
+              if (updated) selectedChat = updated;
+              }
+              }}
+              />
+            {:else}
+              <HomeMain />
+            {/if}
+          </Pane>
       </PaneGroup>
     </div>
   {/if}

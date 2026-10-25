@@ -6,6 +6,27 @@
   import NetworkInfo from './NetworkInfo.svelte';
 
   let { displayName = "Tauri User", onDisconnect }: { displayName?: string, onDisconnect?: () => void } = $props();
+
+  let copiedProfileId = $state(false);
+  let copiedPubKey = $state(false);
+
+  async function copyProfileId() {
+    if (!statusState.accountKeyUid) return;
+    try {
+      await navigator.clipboard.writeText(statusState.accountKeyUid);
+      copiedProfileId = true;
+      setTimeout(() => copiedProfileId = false, 2000);
+    } catch (e) { console.error(e); }
+  }
+
+  async function copyPubKey() {
+    if (!statusState.publicKey) return;
+    try {
+      await navigator.clipboard.writeText(statusState.publicKey);
+      copiedPubKey = true;
+      setTimeout(() => copiedPubKey = false, 2000);
+    } catch (e) { console.error(e); }
+  }
 </script>
 
 <div class="flex flex-col h-full border-r border-border bg-card">
@@ -32,11 +53,34 @@
         >
           {i18n.t('Disconnect')}
         </button>
-        <div class="mt-2 text-[10px] font-mono text-muted-foreground break-all">
-          PubKey: {statusState.accountKeyUid ? statusState.accountKeyUid.substring(0, 10) + '...' : '...'}
+
+        <!-- Profile ID (внутренний, для логина) -->
+        <div class="mt-3">
+          <div class="text-[10px] font-bold text-muted-foreground uppercase">Profile ID</div>
+          <button
+            onclick={copyProfileId}
+            class="mt-0.5 text-[10px] font-mono text-muted-foreground text-left hover:text-primary transition-colors cursor-pointer"
+            title={i18n.t('Click to copy')}
+          >
+            {statusState.accountKeyUid ? statusState.accountKeyUid.substring(0, 6) + '...' : '...'}
+            {#if copiedProfileId}<span class="ml-1 text-green-600 font-sans font-bold">✓ Copied!</span>{/if}
+          </button>
         </div>
 
-        <!-- Сетевая информация -->
+        <!-- Public Key (для чата) -->
+        <div class="mt-2">
+          <div class="text-[10px] font-bold text-muted-foreground uppercase">Public Key (for chat)</div>
+          <button
+            onclick={copyPubKey}
+            class="mt-0.5 text-[10px] font-mono text-muted-foreground text-left hover:text-primary transition-colors cursor-pointer"
+            title={i18n.t('Click to copy')}
+          >
+            {statusState.publicKey ? statusState.publicKey.substring(0, 6) + '...' : '(loading...)'}
+            {#if copiedPubKey}<span class="ml-1 text-green-600 font-sans font-bold">✓ Copied!</span>{/if}
+          </button>
+        </div>
+
+        <!-- Сетевая информация (RPC, Waku Fleet, Chain ID) -->
         <NetworkInfo />
       {:else}
         <button class="w-full py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium">

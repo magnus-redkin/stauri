@@ -12,6 +12,7 @@ export const statusState = $state({
   events: [] as StatusEvent[],
   errorMsg: '',
   accounts: [] as any[],
+  alias: '',
 
   pendingRequestsCount: 0,
   lastMessageSignal: 0, // <-- Счётчик для триггера обновления
@@ -55,6 +56,7 @@ export function processSignal(rawJson: string) {
       statusState.accountKeyUid = loginEvent.event?.settings?.['key-uid'] || statusState.accountKeyUid;
       statusState.publicKey = loginEvent.event?.settings?.['public-key'] || statusState.publicKey;
       statusState.isLoggedIn = true;
+      statusState.alias = loginEvent.event?.settings?.alias || statusState.alias;
 
       if (statusState.backendPort) {
         startMessenger(statusState.backendPort).catch((e) => {
@@ -115,4 +117,8 @@ export function setPublicKey(key: string) {
 
 export function setPendingRequestsCount(count: number) {
   statusState.pendingRequestsCount = count;
+}
+
+export function setAlias(alias: string) {
+  statusState.alias = alias;
 }

@@ -96,7 +96,8 @@
           <User size={32} />
         </div>
         <div class="text-center">
-          <div class="font-bold text-lg">{displayName}</div>
+          <!-- Используем alias вместо displayName -->
+          <div class="font-bold text-lg">{statusState.alias || displayName}</div>
           <div class="text-xs text-muted-foreground">
             {statusState.accountKeyUid ? statusState.accountKeyUid.substring(0, 8) + '...' : ''}
           </div>

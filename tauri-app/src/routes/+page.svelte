@@ -447,7 +447,7 @@
           {#if activeSection === 'home'}
             <HomeMain />
           {:else if activeSection === 'profile'}
-            <ProfileMain />
+            <ProfileMain onNavigate={(section) => activeSection = section} />
           {:else if activeSection === 'contacts'}
             <ContactsMain />
           {:else if activeSection === 'settings'}

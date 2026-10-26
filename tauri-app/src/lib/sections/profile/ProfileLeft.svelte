@@ -5,7 +5,15 @@
   import { statusState } from '$lib/stores/statusStore.svelte';
   import NetworkInfo from './NetworkInfo.svelte';
 
-  let { displayName = "Tauri User", onDisconnect }: { displayName?: string, onDisconnect?: () => void } = $props();
+  let {
+    displayName = "Tauri User",
+    onDisconnect,
+    onCreateSeed
+  }: {
+    displayName?: string,
+    onDisconnect?: () => void,
+    onCreateSeed?: () => void
+  } = $props();
 
   let copiedProfileId = $state(false);
   let copiedPubKey = $state(false);
@@ -54,12 +62,12 @@
           {i18n.t('Disconnect')}
         </button>
 
-        <!-- Profile ID (внутренний, для логина) -->
+        <!-- Profile ID -->
         <div class="mt-3">
-          <div class="text-[10px] font-bold text-muted-foreground uppercase">Profile ID</div>
+          <div class="text-[12px] font-bold text-muted-foreground uppercase">Profile ID</div>
           <button
             onclick={copyProfileId}
-            class="mt-0.5 text-[10px] font-mono text-muted-foreground text-left hover:text-primary transition-colors cursor-pointer"
+            class="mt-0.5 text-[12px] font-mono text-muted-foreground text-left hover:text-primary transition-colors cursor-pointer"
             title={i18n.t('Click to copy')}
           >
             {statusState.accountKeyUid ? statusState.accountKeyUid.substring(0, 6) + '...' : '...'}
@@ -67,12 +75,12 @@
           </button>
         </div>
 
-        <!-- Public Key (для чата) -->
+        <!-- Public Key -->
         <div class="mt-2">
-          <div class="text-[10px] font-bold text-muted-foreground uppercase">Public Key (for chat)</div>
+          <div class="text-[12px] font-bold text-muted-foreground uppercase">Public Key (for chat)</div>
           <button
             onclick={copyPubKey}
-            class="mt-0.5 text-[10px] font-mono text-muted-foreground text-left hover:text-primary transition-colors cursor-pointer"
+            class="mt-0.5 text-[12px] font-mono text-muted-foreground text-left hover:text-primary transition-colors cursor-pointer"
             title={i18n.t('Click to copy')}
           >
             {statusState.publicKey ? statusState.publicKey.substring(0, 6) + '...' : '(loading...)'}
@@ -80,7 +88,7 @@
           </button>
         </div>
 
-        <!-- Сетевая информация (RPC, Waku Fleet, Chain ID) -->
+        <!-- Сетевая информация -->
         <NetworkInfo />
       {:else}
         <button class="w-full py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium">
@@ -96,15 +104,24 @@
           <User size={32} />
         </div>
         <div class="text-center">
-          <!-- Используем alias вместо displayName -->
           <div class="font-bold text-lg">{statusState.alias || displayName}</div>
           <div class="text-xs text-muted-foreground">
             {statusState.accountKeyUid ? statusState.accountKeyUid.substring(0, 8) + '...' : ''}
           </div>
         </div>
-        <button class="w-full mt-2 py-1.5 border border-border rounded-md text-sm hover:bg-secondary">
-          {i18n.t('Edit Profile')}
-        </button>
+
+        <!-- Красная плашка "Seed не сохранена" -->
+        {#if !statusState.isSeedSaved}
+          <button
+            onclick={() => {
+            console.log("CreateSeed clicked"); // <-- Проверка
+                                                      onCreateSeed?.();
+                                                      }}
+                                                      class="w-full p-2 bg-red-100 text-red-700 rounded-md text-xs font-semibold text-center border border-red-300 hover:bg-red-200 transition-colors cursor-pointer"
+                                                      >
+              ⚠️ {i18n.t('Seed-фраза не сохранена')}
+          </button>
+        {/if}
       </div>
     {/if}
   </ScrollArea>

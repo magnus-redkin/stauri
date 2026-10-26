@@ -57,7 +57,7 @@
     <!-- Выпадающий список тестнетов (показываем если раскрыт) -->
     {#if isTestnetExpanded}
       <div class="mt-2 ml-4 space-y-1">
-        {#each testnets as net}
+        {#each testnets as net (net)}
           <button
             onclick={() => selectNetwork(net)}
             class="w-full text-left px-4 py-2 rounded-md text-sm transition-colors {selectedNetwork === net ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 font-medium' : 'hover:bg-secondary text-muted-foreground'}"

@@ -24,7 +24,6 @@
 
   function createAccount() {
     // Заглушка для песочницы
-    console.log("TODO: Call wallet_addAccount with", newAccountName, selectedColor);
     isAddAccountOpen = false;
     newAccountName = "";
     // Сбрасываем цвет для следующего открытия
@@ -50,7 +49,7 @@
       </div>
 
       <!-- Список аккаунтов -->
-      {#each accounts as acc}
+      {#each accounts as acc (acc.id)}
         <button class="w-full text-left p-3 rounded-md hover:bg-secondary flex items-center gap-3 transition-colors border border-transparent hover:border-border">
           <!-- Цвет берется из acc.color -->
           <div class="w-8 h-8 rounded-full {acc.color} flex items-center justify-center text-white">
@@ -112,7 +111,7 @@
       <div class="grid gap-2">
         <label class="text-sm font-medium">{i18n.t('Colour')}</label>
         <div class="grid grid-cols-4 gap-3 mt-1">
-          {#each colors as color}
+          {#each colors as color (color)}
             <button
               onclick={() => selectedColor = color}
               class="w-10 h-10 rounded-full {color} {selectedColor === color ? 'ring-2 ring-offset-2 ring-primary' : ''} transition-all"

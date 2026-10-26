@@ -12,9 +12,7 @@
 </script>
 
 <div class="w-full max-w-md space-y-3 p-4 border border-border rounded-lg bg-card">
-  <h3 class="font-semibold text-foreground text-sm">{i18n.t('Create new profile')}</h3>
-
-  <PasswordInput
+  <h3 class="font-semibold text-foreground text-sm">{i18n.t('Create new profile')}</h3><PasswordInput
     bind:value={password}
     placeholder={i18n.t('New Password')}
     onEnter={onCreate}

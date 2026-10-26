@@ -27,7 +27,7 @@ export async function statusFetch<T>(port: number, endpoint: string, body: any):
   try {
     data = JSON.parse(text);
   } catch (e) {
-    throw new Error(`Invalid JSON response from ${endpoint}: ${text.substring(0, 100)}...`);
+    throw new Error(`Invalid JSON response from ${endpoint}: ${text.substring(0, 100)}...`, { cause: e });
   }
 
   // 4. Обработка ошибок (единый блок для JSON-RPC и обычного API)

@@ -163,7 +163,7 @@
           <p class="text-muted-foreground text-sm italic">{i18n.t('No messages yet. Say hello!')}</p>
         {:else}
           <div class="space-y-2">
-            {#each messages as msg}
+            {#each messages as msg, i (i)}
               <div class="flex {msg.from === 'me' ? 'justify-end' : 'justify-start'}">
                 <div class="max-w-[70%] p-2 rounded-lg {msg.from === 'me' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-foreground'}">
                   {formatMessageText(msg.text, contacts)}

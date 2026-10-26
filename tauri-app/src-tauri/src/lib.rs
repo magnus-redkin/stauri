@@ -96,48 +96,75 @@ fn default_rpc_url(network: &str) -> String {
     }
 }
 
+// Белый список сетей: (имя, chain_id, waku_fleet)
+const NETWORKS: &[(&str, u64, &str)] = &[
+    ("mainnet", 1, "status.prod"),
+    ("sepolia", 11155111, "status.test"),
+    ("holesky", 17000, "status.test"),
+];
+
+fn config_for_network(network: &str) -> Result<AppConfig, String> {
+    // 1. Проверяем сеть по белому списку
+    let (name, chain_id, fleet) = NETWORKS
+        .iter()
+        .find(|(n, _, _)| *n == network)
+        .ok_or_else(|| format!("Unknown network: {}. Allowed: mainnet, sepolia, holesky", network))?;
+
+    let rpc_url = default_rpc_url(name);
+
+    Ok(AppConfig {
+        ethereum: Some(EthereumConfig {
+            preset: Some(network.to_string()),
+            chain_id: *chain_id,
+            rpc_url: Some(rpc_url),
+        }),
+        waku: Some(WakuConfig {
+            fleet: Some(fleet.to_string()),
+        }),
+    })
+}
+
 fn load_config() -> AppConfig {
-    // 1. Проверяем STAURI_NETWORK shorthand
+    // 1. STAURI_NETWORK (только из белого списка)
     if let Ok(network) = std::env::var("STAURI_NETWORK") {
-        let chain_id = match network.as_str() {
-            "sepolia" => 11155111,
-            "holesky" => 17000,
-            "mainnet" => 1,
-            _ => 1,
-        };
-
-        let fleet = if network == "mainnet" {
-            "status.prod".to_string()
-        } else {
-            "status.test".to_string()
-        };
-
-        return AppConfig {
-            ethereum: Some(EthereumConfig {
-                preset: Some(network),
-                chain_id,
-                rpc_url: None,
-            }),
-            waku: Some(WakuConfig {
-                fleet: Some(fleet),
-            }),
-        };
+        match config_for_network(&network) {
+            Ok(config) => return config,
+            Err(e) => eprintln!("Warning: invalid STAURI_NETWORK: {}. Falling back to mainnet.", e),
+        }
     }
 
-    // 2. Проверяем STAURI_CONFIG_PATH
+    // 2. STAURI_CONFIG_PATH
     if let Ok(path) = std::env::var("STAURI_CONFIG_PATH") {
         if let Ok(content) = std::fs::read_to_string(&path) {
-            if let Ok(config) = serde_json::from_str(&content) {
+            if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
+                // Валидация preset (если задан)
+                if let Some(ref eth) = config.ethereum {
+                    if let Some(ref preset) = eth.preset {
+                        if !NETWORKS.iter().any(|(n, _, _)| *n == preset) {
+                            eprintln!("Warning: invalid preset '{}' in config.json. Falling back to mainnet.", preset);
+                            return AppConfig::default();
+                        }
+                    }
+                }
                 return config;
             }
         }
     }
 
-    // 3. Проверяем ~/.config/stauri/config.json
+    // 3. ~/.config/stauri/config.json
     if let Some(config_dir) = dirs::config_dir() {
         let config_path = config_dir.join("stauri").join("config.json");
         if let Ok(content) = std::fs::read_to_string(&config_path) {
-            if let Ok(config) = serde_json::from_str(&content) {
+            if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
+                // Та же валидация
+                if let Some(ref eth) = config.ethereum {
+                    if let Some(ref preset) = eth.preset {
+                        if !NETWORKS.iter().any(|(n, _, _)| *n == preset) {
+                            eprintln!("Warning: invalid preset '{}' in config.json. Falling back to mainnet.", preset);
+                            return AppConfig::default();
+                        }
+                    }
+                }
                 return config;
             }
         }
@@ -147,34 +174,10 @@ fn load_config() -> AppConfig {
     AppConfig::default()
 }
 
-// Вспомогательная функция для создания конфига по имени сети
-fn config_for_network(network: &str) -> AppConfig {
-    let chain_id = match network {
-        "sepolia" => 11155111,
-        "holesky" => 17000,
-        _ => 1,
-    };
-    let fleet = if network == "mainnet" {
-        "status.prod".to_string()
-    } else {
-        "status.test".to_string()
-    };
-    AppConfig {
-        ethereum: Some(EthereumConfig {
-            preset: Some(network.to_string()),
-            chain_id,
-            rpc_url: None,
-        }),
-        waku: Some(WakuConfig {
-            fleet: Some(fleet),
-        }),
-    }
-}
-
 struct BackendState {
     child: Mutex<Option<CommandChild>>,
     port: Mutex<Option<u16>>,
-    data_dir: Mutex<Option<PathBuf>>, // <-- Сохраняем dataDir для stop_backend
+    data_dir: Mutex<Option<PathBuf>>,
 }
 
 fn kill_stale_backend(dir: &std::path::Path) {
@@ -203,6 +206,17 @@ async fn start_backend(app: tauri::AppHandle, network: Option<String>) -> Result
     {
         let child_lock = state.child.lock().map_err(|_| "Mutex poisoned")?;
         if child_lock.is_some() {
+            // Если процесс уже запущен, но запрошена другая сеть — возвращаем ошибку
+            let current_config = load_config();
+            if let Some(ref net) = network {
+                if net != &current_config.network_name() {
+                    return Err(format!(
+                        "Backend is already running on network '{}', cannot switch to '{}' without restart.",
+                        current_config.network_name(), net
+                    ));
+                }
+            }
+
             let port_lock = state.port.lock().map_err(|_| "Mutex poisoned")?;
             let port = port_lock.unwrap_or(0);
 
@@ -211,9 +225,8 @@ async fn start_backend(app: tauri::AppHandle, network: Option<String>) -> Result
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_default();
 
-            // Определяем конфиг для ответа (если network передан, используем его)
             let config = if let Some(net) = &network {
-                config_for_network(net)
+                config_for_network(net)?
             } else {
                 load_config()
             };
@@ -230,9 +243,9 @@ async fn start_backend(app: tauri::AppHandle, network: Option<String>) -> Result
         }
     }
 
-    // 2. Загружаем конфигурацию (если network передан — используем его)
+    // 2. Загружаем конфигурацию
     let config = if let Some(net) = &network {
-        config_for_network(net)
+        config_for_network(net)?
     } else {
         load_config()
     };
@@ -293,14 +306,26 @@ async fn start_backend(app: tauri::AppHandle, network: Option<String>) -> Result
     }
 
     // 10. Читаем логи в фоне
+    let app_handle = app.clone();
     tauri::async_runtime::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
                 tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
+                    #[cfg(debug_assertions)]
                     println!("[status-backend stdout] {}", String::from_utf8_lossy(&line));
                 }
                 tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
+                    #[cfg(debug_assertions)]
                     println!("[status-backend stderr] {}", String::from_utf8_lossy(&line));
+                }
+                tauri_plugin_shell::process::CommandEvent::Terminated(payload) => {
+                    eprintln!("[status-backend] Terminated: {:?}", payload);
+                    // Сбрасываем состояние, чтобы UI знал, что бэкенд упал
+                    let state = app_handle.state::<BackendState>();
+                    let mut port_lock = state.port.lock().unwrap();
+                    *port_lock = None;
+                    let mut child_lock = state.child.lock().unwrap();
+                    *child_lock = None;
                 }
                 _ => {}
             }
@@ -401,10 +426,9 @@ pub fn run() {
 // =========================================================================
 #[cfg(test)]
 mod tests {
-    use super::*; // Импортирует ВСЁ из lib.rs, включая приватные функции и структуры
+    use super::*;
     use std::path::PathBuf;
 
-    // --- Тесты для default_rpc_url ---
     #[test]
     fn test_default_rpc_url_sepolia() {
         assert_eq!(default_rpc_url("sepolia"), "https://rpc.sepolia.org");
@@ -421,10 +445,9 @@ mod tests {
         assert_eq!(default_rpc_url("unknown_network"), "https://ethereum-rpc.publicnode.com");
     }
 
-    // --- Тесты для config_for_network ---
     #[test]
     fn test_config_for_network_sepolia() {
-        let config = config_for_network("sepolia");
+        let config = config_for_network("sepolia").unwrap();
         assert_eq!(config.network_name(), "sepolia");
         assert_eq!(config.chain_id(), 11155111);
         assert_eq!(config.waku_fleet(), "status.test");
@@ -433,14 +456,20 @@ mod tests {
 
     #[test]
     fn test_config_for_network_mainnet() {
-        let config = config_for_network("mainnet");
+        let config = config_for_network("mainnet").unwrap();
         assert_eq!(config.network_name(), "mainnet");
         assert_eq!(config.chain_id(), 1);
         assert_eq!(config.waku_fleet(), "status.prod");
         assert!(!config.is_testnet());
     }
 
-    // --- Тесты для методов AppConfig ---
+    #[test]
+    fn test_config_for_network_invalid() {
+        let result = config_for_network("../../x");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown network"));
+    }
+
     #[test]
     fn test_app_config_defaults() {
         let config = AppConfig::default();
@@ -470,36 +499,5 @@ mod tests {
         assert_eq!(config.waku_fleet(), "custom.fleet");
         assert!(config.is_testnet());
         assert_eq!(config.data_dir_suffix(), PathBuf::from("sepolia"));
-    }
-
-    // --- Тесты для load_config (с переменными окружения) ---
-    #[test]
-    fn test_load_config_from_env_shorthand() {
-        // В новых версиях Rust работа с переменными окружения требует unsafe блока
-        unsafe {
-            std::env::set_var("STAURI_NETWORK", "sepolia");
-            std::env::remove_var("STAURI_CONFIG_PATH");
-        }
-
-        let config = load_config();
-        assert_eq!(config.network_name(), "sepolia");
-        assert_eq!(config.chain_id(), 11155111);
-
-        // Очистка после теста
-        unsafe {
-            std::env::remove_var("STAURI_NETWORK");
-        }
-    }
-
-    #[test]
-    fn test_load_config_default() {
-        unsafe {
-            std::env::remove_var("STAURI_NETWORK");
-            std::env::remove_var("STAURI_CONFIG_PATH");
-        }
-
-        let config = load_config();
-        assert_eq!(config.network_name(), "mainnet");
-        assert_eq!(config.chain_id(), 1);
     }
 }

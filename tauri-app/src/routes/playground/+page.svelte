@@ -1,18 +1,18 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { i18n, loadTranslations } from '$lib/i18n';
 
   import { PaneGroup, Pane, PaneResizer } from "paneforge";
   import SidebarIcons from "$lib/sections/layout/SidebarIcons.svelte";
-  import AuthFlow from "$lib/sections/auth/AuthFlow.svelte";
+  import MainEntryScreen from "$lib/sections/auth/MainEntryScreen.svelte";
   import ComingSoon from "$lib/sections/layout/ComingSoon.svelte";
 
   // Разделы
   import HomeLeft from "$lib/sections/home/HomeLeft.svelte";
   import HomeMain from "$lib/sections/home/HomeMain.svelte";
   import ProfileLeft from "$lib/sections/profile/ProfileLeft.svelte";
-  import ProfileMain from "$lib/sections/profile/ProfileMain.svelte";
+  import EditProfile from "$lib/sections/profile/EditProfile.svelte";
   import ContactsLeft from "$lib/sections/contacts/ContactsLeft.svelte";
   import ContactsMain from "$lib/sections/contacts/ContactsMain.svelte";
   import SettingsLeft from "$lib/sections/settings/SettingsLeft.svelte";
@@ -67,7 +67,7 @@
 
 {#if !isLoggedIn}
   <div class="h-screen w-screen bg-background flex items-center justify-center">
-    <AuthFlow onLogin={handleLogin} {hasProfiles} />
+    <MainEntryScreen onLogin={handleLogin} {hasProfiles} />
   </div>
 {:else}
   <div class="h-screen w-screen flex bg-background text-foreground overflow-hidden font-sans">
@@ -117,7 +117,7 @@
           {#if activeSection === 'home'}
             <HomeMain />
           {:else if activeSection === 'profile'}
-            <ProfileMain />
+            <EditProfile />
           {:else if activeSection === 'contacts'}
             <ContactsMain />
           {:else if activeSection === 'settings'}

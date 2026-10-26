@@ -16,7 +16,7 @@
 </script>
 
 <nav class="w-16 flex flex-col items-center py-4 border-r border-border bg-secondary gap-2 shadow-sm z-20 relative">
-  {#each navItems as item}
+  {#each navItems as item (item.id)}
     <div class="relative group">
       <button
         class="p-3 rounded-lg transition-colors {activeSection === item.id ? 'bg-primary text-primary-foreground shadow-md' : 'hover:bg-black/5 text-muted-foreground'}"

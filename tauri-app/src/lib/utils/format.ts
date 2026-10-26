@@ -23,7 +23,7 @@ export function formatBalance(
     wei = BigInt(weiStr);
   } catch (e) {
     // Не глотаем ошибку — пусть вызывающий код решает, что делать
-    throw new Error(`Invalid balance value: "${weiStr}"`);
+    throw new Error(`Invalid balance value: "${weiStr}"`, { cause: e });
   }
 
   const divisor = 10n ** BigInt(safeDecimals);

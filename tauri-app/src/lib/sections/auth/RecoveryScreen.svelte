@@ -63,9 +63,9 @@
     <p class="text-sm text-muted-foreground">{i18n.t('Enter your 12 words in the correct order.')}</p>
 
     <div class="grid grid-cols-2 gap-2 w-full max-w-md">
-      {#each words as word, i}
-  <div class="relative">
-    <span class="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">{i + 1}.</span>
+      {#each words as _, i (i)}
+        <div class="relative">
+          <span class="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">{i + 1}.</span>
 
     {#if i === 0}
       <input

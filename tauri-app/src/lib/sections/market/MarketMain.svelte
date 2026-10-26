@@ -50,7 +50,7 @@
           </tr>
         </thead>
         <tbody>
-          {#each tokens as token}
+          {#each tokens as token (token.rank)}
             <tr class="border-b border-border hover:bg-secondary/30 transition-colors">
               <td class="px-4 py-4 text-center text-muted-foreground">{token.rank}</td>
               <td class="px-4 py-4">

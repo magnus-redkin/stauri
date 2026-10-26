@@ -8,27 +8,34 @@
     processSignal,
     resetState,
     setAccounts,
-    setNetworkInfo
+    setNetworkInfo,
+    setPendingRequestsCount,
+    logout,
+    waitForLogin,
+    setSeedSaved
   } from '$lib/stores/statusStore.svelte';
-
-  import { setPendingRequestsCount } from '$lib/stores/statusStore.svelte';
 
   import {
     startBackend,
     stopBackend,
     initializeApplication,
     loginAccount,
-    createAccountAndLogin
+    createAccountAndLogin,
+    getChats as apiGetChats,
+    getContacts
   } from '$lib/status/api';
+
+  import { getDisplayName } from '$lib/utils/user';
 
   import { PaneGroup, Pane, PaneResizer } from "paneforge";
   import SidebarIcons from "$lib/sections/layout/SidebarIcons.svelte";
-
   import MainEntryScreen from "$lib/sections/auth/MainEntryScreen.svelte";
-  import HomeLeft from "$lib/sections/home/HomeLeft.svelte";
+  import RecoveryScreen from '$lib/sections/auth/RecoveryScreen.svelte';
+
   import HomeMain from "$lib/sections/home/HomeMain.svelte";
-  import ProfileLeft from "$lib/sections/profile/ProfileLeft.svelte"; // <-- Добавить
-  import ProfileMain from "$lib/sections/profile/ProfileMain.svelte";
+  import ProfileLeft from "$lib/sections/profile/ProfileLeft.svelte";
+  import EditProfile from "$lib/sections/profile/EditProfile.svelte";
+  import CreateSeed from "$lib/sections/profile/CreateSeed.svelte";
   import ContactsLeft from "$lib/sections/contacts/ContactsLeft.svelte";
   import ContactsMain from "$lib/sections/contacts/ContactsMain.svelte";
   import SettingsLeft from "$lib/sections/settings/SettingsLeft.svelte";
@@ -36,38 +43,32 @@
   import WalletLeft from "$lib/sections/wallet/WalletLeft.svelte";
   import WalletMain from "$lib/sections/wallet/WalletMain.svelte";
   import MarketMain from "$lib/sections/market/MarketMain.svelte";
-  import RecoveryScreen from '$lib/sections/auth/RecoveryScreen.svelte';
-
-
-  import ChatLeft, { type ChatItem } from '$lib/sections/chat/ChatLeft.svelte';
-  import ChatMain from '$lib/sections/chat/ChatMain.svelte';
-
-  let chats = $state<ChatItem[]>([]);
-  let selectedChat = $state<ChatItem | null>(null);
-
-  let selectedChatId = $state<string | null>(null);
-
-  let currentNetwork = $state('mainnet'); // Текущая сеть, для которой запущен бэкенд
+  import ChatLeft, { type ChatItem } from "$lib/sections/chat/ChatLeft.svelte";
+  import ChatMain from "$lib/sections/chat/ChatMain.svelte";
 
   let activeSection = $state('home');
   let ws: WebSocket | null = null;
   let selectedAccountKeyUid = $state('');
   let hasProfiles = $state(false);
-  let password = $state('');
-  let selectedNetwork = $state('mainnet'); // <-- Добавляем сеть
-
+  let selectedNetwork = $state('mainnet');
   let showRecovery = $state(false);
-  let allContacts = $state<any[]>([]);
+  let showCreateSeed = $state(false);
 
+  let chats = $state<ChatItem[]>([]);
+  let allContacts = $state<any[]>([]);
+  let selectedChat = $state<ChatItem | null>(null);
+  let selectedContact = $state<any>(null);
+
+  // Флаг, предотвращающий бесконечный цикл загрузки чатов
+  let chatsLoaded = $state(false);
 
   $effect(() => {
-    // Отслеживаем lastMessageSignal
-    if (statusState.lastMessageSignal > 0 && activeSection === 'chat') {
-      loadChatsAndRequests();
+    if (activeSection !== 'profile') {
+      showCreateSeed = false;
     }
   });
 
-  // Ctrl+Q (без изменений)
+  // Ctrl+Q
   $effect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'q') {
@@ -79,110 +80,51 @@
     return () => window.removeEventListener('keydown', handleKeyDown);
   });
 
-  onMount(async () => {
-    // Загружаем аккаунты для Mainnet по умолчанию
-    await loadAccountsForNetwork('mainnet');
-  });
-
-
-  import { getChats as apiGetChats, getContacts } from '$lib/status/api';
-  import { getDisplayName } from '$lib/utils/user';
-
-
-
-  async function loadChatsAndRequests() {
-    if (!statusState.backendPort) return;
-
-    try {
-      // 1. Загружаем чаты
-      const chatsRes = await apiGetChats(statusState.backendPort);
-      const rawChats = chatsRes.result || [];
-
-      // 2. Загружаем контакты (для получения alias/displayName)
-      const contactsRes = await getContacts(statusState.backendPort);
-      allContacts = contactsRes.result || [];
-
-      // 3. Маппим чаты, подставляя имя из контактов (если есть)
-      chats = rawChats.map((c: any) => {
-        // Ищем контакт по id чата (для личных чатов id = публичный ключ собеседника)
-        const contact = allContacts.find((ct: any) => ct.id === c.id);
-
-        // Определяем имя: если есть контакт — берём из него, иначе из чата
-        const name = contact ? getDisplayName(contact) : getDisplayName(c);
-
-        // Определяем, является ли чат входящим запросом
-        const isPendingRequest = c.active === false && c.lastMessage?.contactRequestState === 1;
-
-        return {
-          id: c.id,
-          name,
-          lastMessage: c.lastMessage?.text || '',
-          type: 'status' as const,
-          isPendingRequest,
-        };
-      });
-
-      // 4. Обновляем счётчик pending-запросов для бейджа на иконке Chat
-      const pendingCount = chats.filter(c => c.isPendingRequest).length;
-      setPendingRequestsCount(pendingCount);
-
-      console.log("🟢 Chats loaded:", chats.length, "Pending:", pendingCount);
-      console.log("🔵 Raw chats:", rawChats.map(c => ({ id: c.id, name: c.name, alias: c.alias })));
-      console.log("🟣 Contacts:", allContacts.map(c => ({ id: c.id, alias: c.alias, displayName: c.displayName })));
-    } catch (e: any) {
-      console.error("Failed to load chats/requests:", e);
-      statusState.errorMsg = `Failed to load chats: ${e?.message || e}`;
-    }
-  }
-
-
+  // Реагируем на новые сообщения (если мы на вкладке чата)
   $effect(() => {
-    if (statusState.isLoggedIn && activeSection === 'chat' && chats.length === 0) {
+    if (statusState.isLoggedIn && activeSection === 'chat' && !chatsLoaded) {
       loadChatsAndRequests();
     }
+    // Если ушли с вкладки Chat, сбрасываем флаг, чтобы при возврате загрузить заново
+    if (activeSection !== 'chat') {
+      chatsLoaded = false;
+    }
   });
 
-  async function loadAccountsForNetwork(network: string) {
-    // Если уже идет подключение, не прерываем его
+  onMount(async () => {
+    // Передаем undefined, чтобы Rust взял сеть из конфига (или mainnet по умолчанию)
+    await loadAccountsForNetwork(undefined);
+  });
+
+  async function loadAccountsForNetwork(network?: string) {
     if (statusState.isConnecting) return;
 
-    // 1. Останавливаем старый бэкенд, если он был
     if (statusState.backendPort) {
-      try {
-        await stopBackend();
-      } catch (e) {
-        console.warn("Failed to stop old backend:", e);
-      }
-      // Даем время процессу умереть и освободить порт
+      try { await stopBackend(); } catch (e) { console.warn("stopBackend failed:", e); }
       await new Promise(r => setTimeout(r, 500));
       statusState.isConnected = false;
       statusState.backendPort = null;
     }
 
-    // 2. Включаем спиннер
     statusState.isConnecting = true;
     statusState.errorMsg = '';
 
     try {
-      // 3. Запускаем новый бэкенд для выбранной сети
       const backendInfo = await startBackend(network);
-      console.log("backendInfo:", backendInfo); // <-- Проверка
-
       statusState.backendPort = backendInfo.port;
       statusState.backendDataDir = backendInfo.dataDir;
-      currentNetwork = network;
 
-      // 4. Ждем, пока бэкенд поднимется (важно!)
+      // Обновляем локальное состояние сети
+      selectedNetwork = backendInfo.networkName;
+
       await new Promise(resolve => setTimeout(resolve, 1500));
 
-      // 5. Инициализируем приложение (получаем список аккаунтов)
       const initData = await initializeApplication(
         statusState.backendPort,
         statusState.backendDataDir,
         backendInfo.chainId
       );
 
-      // 6. Обновляем состояние аккаунтов
       if (initData.accounts && initData.accounts.length > 0) {
         setAccounts(initData.accounts);
         selectedAccountKeyUid = initData.accounts[0]["key-uid"];
@@ -193,7 +135,6 @@
         hasProfiles = false;
       }
 
-      // 7. Обновляем сетевую информацию
       setNetworkInfo(
         backendInfo.networkName,
         backendInfo.rpcUrl,
@@ -204,8 +145,7 @@
 
       statusState.isConnected = true;
     } catch (e: any) {
-      console.error("loadAccountsForNetwork error:", e);
-      statusState.errorMsg = `Failed to load accounts: ${e?.message || e || 'Unknown error'}`;
+      statusState.errorMsg = `Failed to load accounts: ${e?.message || e}`;
       statusState.isConnected = false;
       statusState.backendPort = null;
     } finally {
@@ -213,132 +153,61 @@
     }
   }
 
-  // При смене сети в MainEntryScreen
   async function handleNetworkChange(network: string) {
-    console.log("handleNetworkChange:", network); // <-- Проверка
     await loadAccountsForNetwork(network);
-  }
-
-  // При логине (бэкенд уже запущен)
-  async function handleLogin(loginPassword: string) {
-    console.log("handleLogin called. Password:", loginPassword, "Port:", statusState.backendPort, "Account:", selectedAccountKeyUid);
-
-    if (!statusState.backendPort) {
-      console.error("No backend port");
-      statusState.errorMsg = "Backend not connected";
-      return;
-    }
-    if (!loginPassword) {
-      console.error("No password");
-      statusState.errorMsg = "Password is empty";
-      return;
-    }
-    if (!selectedAccountKeyUid) {
-      console.error("No account selected");
-      statusState.errorMsg = "No account selected";
-      return;
-    }
-
-    await reconnectWs(statusState.backendPort);
-
-    try {
-      console.log("Calling loginAccount...");
-      const result = await loginAccount(statusState.backendPort, loginPassword, selectedAccountKeyUid);
-      console.log("loginAccount result:", result);
-      // Успех: processSignal установит isLoggedIn = true
-    } catch (e: any) {
-      console.error("Login failed:", e);
-      statusState.errorMsg = `Login failed: ${e.message || e}`;
-    }
-  }
-
-  async function connect(network: string) {
-    if (ws || statusState.isConnected) return;
-
-    statusState.isConnecting = true; // <-- Включаем спиннер только здесь
-    statusState.errorMsg = '';
-
-    try {
-      const backendInfo = await startBackend(network); // <-- Передаем сеть
-      statusState.backendPort = backendInfo.port;
-      statusState.backendDataDir = backendInfo.dataDir;
-
-      setNetworkInfo(
-        backendInfo.networkName,
-        backendInfo.rpcUrl,
-        backendInfo.wakuFleet,
-        backendInfo.isTestnet
-      );
-
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-
-      const initData = await initializeApplication(
-        statusState.backendPort,
-        statusState.backendDataDir,
-        backendInfo.chainId
-      );
-
-      if (initData.accounts && initData.accounts.length > 0) {
-        setAccounts(initData.accounts);
-        selectedAccountKeyUid = initData.accounts[0]["key-uid"];
-        hasProfiles = true;
-      } else {
-        hasProfiles = false;
-      }
-
-      await reconnectWs(statusState.backendPort);
-      statusState.isConnected = true;
-
-    } catch (e: any) {
-      statusState.errorMsg = `Connection failed: ${e.message || e}`;
-      statusState.isConnected = false;
-      ws = null;
-    } finally {
-      statusState.isConnecting = false; // <-- Выключаем спиннер
-    }
   }
 
   async function reconnectWs(port: number) {
     if (ws) {
-      try { await ws.disconnect(); } catch (e) {}
+      try { await ws.disconnect(); } catch (e) { console.warn("ws.disconnect failed:", e); }
       ws = null;
     }
-
     ws = await WebSocket.connect(`ws://127.0.0.1:${port}/signals`);
     ws.addListener((msg) => processSignal(msg.data));
-    console.log("✅ WebSocket подключен к порту", port);
   }
 
-  // Обработчик создания аккаунта
-  async function handleCreateAccount(newPassword: string) {
-    console.log("handleCreateAccount called with password:", newPassword); // <-- Отладка
+  async function handleLogin(loginPassword: string) {
+    if (!statusState.backendPort || !loginPassword || !selectedAccountKeyUid) return;
 
-    if (!statusState.backendPort) {
-      await connect(selectedNetwork);
+    try {
+      // Подключаем WS (если еще не подключен)
+      if (!ws) await reconnectWs(statusState.backendPort);
+
+      await loginAccount(statusState.backendPort, loginPassword, selectedAccountKeyUid);
+
+      // Ждем сигнал node.login (до 30 сек)
+      await waitForLogin(30000);
+
+      activeSection = 'home';
+    } catch (e: any) {
+      statusState.errorMsg = `Login failed: ${e.message}`;
     }
+  }
 
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      await reconnectWs(statusState.backendPort);
+  async function handleCreateAccount(newPassword: string) {
+    if (!statusState.backendPort) {
+      await loadAccountsForNetwork(selectedNetwork);
     }
 
     if (statusState.backendPort && statusState.backendDataDir) {
       statusState.isConnecting = true;
       try {
+        // Подключаем WS заранее
+        if (!ws) await reconnectWs(statusState.backendPort);
+
         const createResult = await createAccountAndLogin(
           statusState.backendPort,
           statusState.backendDataDir,
-          newPassword // <-- Используем аргумент
+          newPassword
         );
 
         if (createResult?.error) throw new Error(createResult.error);
 
-        let attempts = 0;
-        while (!statusState.isLoggedIn && attempts < 50) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-          attempts++;
-        }
-        if (statusState.isLoggedIn) hasProfiles = true;
-        else statusState.errorMsg = "Account created but login signal not received.";
+        // Ждем сигнал node.login (до 30 сек)
+        await waitForLogin(30000);
+
+        hasProfiles = true;
+        activeSection = 'home';
       } catch (e: any) {
         statusState.errorMsg = `Create account failed: ${e.message}`;
       } finally {
@@ -347,35 +216,67 @@
     }
   }
 
+  async function loadChatsAndRequests(force = false) {
+    if (!statusState.backendPort) return;
+    if (chatsLoaded && !force) return; // Предотвращаем бесконечный цикл
+
+    try {
+      const chatsRes = await apiGetChats(statusState.backendPort);
+      const rawChats = chatsRes.result || [];
+
+      const contactsRes = await getContacts(statusState.backendPort);
+      allContacts = contactsRes.result || [];
+
+      chats = rawChats.map((c: any) => {
+        const contact = allContacts.find((ct: any) => ct.id === c.id);
+        const name = contact ? getDisplayName(contact) : getDisplayName(c);
+
+        return {
+          id: c.id,
+          name,
+          lastMessage: c.lastMessage?.text || '',
+          type: 'status' as const,
+          isPendingRequest: c.active === false && c.lastMessage?.contactRequestState === 1,
+        };
+      });
+
+      const pendingCount = chats.filter(c => c.isPendingRequest).length;
+      setPendingRequestsCount(pendingCount);
+
+      chatsLoaded = true; // Загрузка завершена
+    } catch (e) {
+      console.warn("Failed to load chats:", e);
+    }
+  }
+
   async function handleDisconnect() {
-    // 1. Отключаем WebSocket
     if (ws) {
-      try { await ws.disconnect(); } catch (e) {}
+      try { await ws.disconnect(); } catch (e) { console.warn("ws.disconnect failed:", e); }
       ws = null;
     }
 
-    // 2. Останавливаем бэкенд
+    // Logout перед убийством бэкенда
+    await logout();
+
     try {
       await stopBackend();
     } catch (e) {
       console.warn("Failed to stop backend:", e);
     }
 
-    // 3. Ждем, пока процесс умрет, и сбрасываем все состояние
     await new Promise(r => setTimeout(r, 500));
-    resetState(); // Это сбросит backendPort в null, accounts в [], isConnecting в false
+    resetState();
 
-    // 4. Явно сбрасываем локальные переменные
+    // Сбрасываем локальные флаги
     hasProfiles = false;
     selectedAccountKeyUid = '';
-    password = '';
-    currentNetwork = 'mainnet'; // Сбрасываем сеть на дефолтную
+    chatsLoaded = false;
+    chats = [];
+    selectedChat = null;
 
-    // 5. Запускаем бэкенд заново (как при старте приложения)
-    await loadAccountsForNetwork('mainnet');
+    // Перезапускаем для Mainnet (или из конфига)
+    await loadAccountsForNetwork(undefined);
   }
-
-
 </script>
 
 <div class="min-h-screen bg-background">
@@ -399,7 +300,7 @@
       <RecoveryScreen
         onBack={() => showRecovery = false}
         onLogin={() => {
-          alert("Recovery is not yet implemented. Please use Create Profile or Log In.");
+          alert("Recovery not implemented yet.");
           showRecovery = false;
         }}
       />
@@ -412,7 +313,7 @@
         {hasProfiles}
         bind:selectedAccountKeyUid
         bind:selectedNetwork
-        />
+      />
     {/if}
 
   <!-- Основной интерфейс -->
@@ -421,11 +322,23 @@
       <SidebarIcons bind:activeSection />
 
       <PaneGroup direction="horizontal" class="h-full w-full">
+        <!-- LEFT PANEL -->
         <Pane defaultSize={30} minSize={20} class="h-full overflow-hidden border-r border-border">
           {#if activeSection === 'home' || activeSection === 'profile'}
-            <ProfileLeft displayName="Stauri User" onDisconnect={handleDisconnect} />
+            <ProfileLeft
+              onDisconnect={handleDisconnect}
+              onCreateSeed={() => {
+              console.log("onCreateSeed called, setting showCreateSeed = true");
+              activeSection = 'profile'; // <-- Переключаем на профиль
+              showCreateSeed = true;
+              }}
+
+              />
           {:else if activeSection === 'contacts'}
-            <ContactsLeft />
+            <ContactsLeft
+              onSelectContact={(c) => selectedContact = c}
+              onAddContact={() => selectedContact = null}
+              />
           {:else if activeSection === 'settings'}
             <SettingsLeft />
           {:else if activeSection === 'wallet'}
@@ -437,19 +350,33 @@
               onSelectChat={(item) => selectedChat = item}
               />
           {:else}
-            <ProfileLeft displayName="Stauri User" onDisconnect={handleDisconnect} />
+            <ProfileLeft onDisconnect={handleDisconnect} />
           {/if}
         </Pane>
 
         <PaneResizer class="w-1 bg-border hover:bg-primary transition-colors cursor-col-resize" />
 
+        <!-- MAIN PANEL -->
         <Pane defaultSize={70} class="h-full bg-card">
           {#if activeSection === 'home'}
-            <HomeMain />
+            <HomeMain onNavigate={(s) => activeSection = s} />
           {:else if activeSection === 'profile'}
-            <ProfileMain onNavigate={(section) => activeSection = section} />
-          {:else if activeSection === 'contacts'}
-            <ContactsMain />
+            {#if showCreateSeed}
+              <CreateSeed
+                onBack={() => showCreateSeed = false}
+                onSave={() => {
+                setSeedSaved(true);
+                showCreateSeed = false;
+                }}
+                />
+              {:else}
+                <EditProfile onNavigate={(s) => activeSection = s} />
+              {/if}
+            {:else if activeSection === 'contacts'}
+              <ContactsMain
+                selectedContact={selectedContact}
+                onClearSelection={() => selectedContact = null}
+                />
           {:else if activeSection === 'settings'}
             <SettingsMain />
           {:else if activeSection === 'wallet'}
@@ -460,19 +387,12 @@
             <ChatMain
               chat={selectedChat}
               contacts={allContacts}
-              onRefresh={async () => {
-              await loadChatsAndRequests();
-              // После обновления списка ищем наш чат в новом списке
-              if (selectedChat) {
-              const updated = chats.find(c => c.id === selectedChat?.id);
-              if (updated) selectedChat = updated;
-              }
-              }}
-              />
-            {:else}
-              <HomeMain />
-            {/if}
-          </Pane>
+              onRefresh={() => loadChatsAndRequests(true)}
+            />
+          {:else}
+            <HomeMain />
+          {/if}
+        </Pane>
       </PaneGroup>
     </div>
   {/if}

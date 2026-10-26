@@ -7,33 +7,34 @@ export const statusState = $state({
   isLoggedIn: false,
   accountKeyUid: '',
   publicKey: '',
+  alias: '', // Трёхсловное имя (генерируется автоматически)
+  chainId: 1,
   backendPort: null as number | null,
   backendDataDir: '',
   events: [] as StatusEvent[],
   errorMsg: '',
   accounts: [] as any[],
-  alias: '',
-
-  pendingRequestsCount: 0,
-  lastMessageSignal: 0, // <-- Счётчик для триггера обновления
-
-  // Сетевая информация
   networkName: 'mainnet',
   rpcUrl: '',
   wakuFleet: 'status.prod',
   isTestnet: false,
+  pendingRequestsCount: 0,
+  lastMessageSignal: 0,
+  isSeedSaved: false,
 });
 
-export function setNetworkInfo(networkName: string, rpcUrl: string, wakuFleet: string, isTestnet: boolean) {
-  statusState.networkName = networkName;
-  statusState.rpcUrl = rpcUrl;
-  statusState.wakuFleet = wakuFleet;
-  statusState.isTestnet = isTestnet;
+// Механизм ожидания логина (Promise)
+let loginResolver: (() => void) | null = null;
+let loginTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
+export function setSeedSaved(saved: boolean) {
+  statusState.isSeedSaved = saved;
+  // Сохраняем в localStorage, чтобы флаг не сбрасывался при перезапуске
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem('stauri_seed_saved', saved ? 'true' : 'false');
+  }
 }
 
-export function setAccounts(accounts: any[]) {
-  statusState.accounts = accounts;
-}
 
 export function processSignal(rawJson: string) {
   if (!rawJson) return;
@@ -41,44 +42,95 @@ export function processSignal(rawJson: string) {
   try {
     const parsed = JSON.parse(rawJson) as StatusEvent;
 
-    // Добавляем событие в массив (для отладки)
+    // Ограничиваем массив событий, чтобы не забивать память (храним последние 100)
     statusState.events.push(parsed);
+    if (statusState.events.length > 100) {
+      statusState.events.shift();
+    }
 
-    // Обработка node.login
     if (parsed.type === 'node.login') {
       const loginEvent = parsed as NodeLoginEvent;
 
       if (loginEvent.event?.error) {
         statusState.errorMsg = `Login failed: ${loginEvent.event.error}`;
+        if (loginResolver) {
+          // Если логин упал, промис отклоняется (но проще просто дать таймауту сработать или добавить reject)
+          // Для простоты просто не разрешаем его здесь.
+        }
         return;
       }
 
       statusState.accountKeyUid = loginEvent.event?.settings?.['key-uid'] || statusState.accountKeyUid;
       statusState.publicKey = loginEvent.event?.settings?.['public-key'] || statusState.publicKey;
+      statusState.alias = loginEvent.event?.settings?.['alias'] || statusState.alias;
       statusState.isLoggedIn = true;
-      statusState.alias = loginEvent.event?.settings?.alias || statusState.alias;
+      statusState.errorMsg = ''; // Очищаем ошибки при успешном входе
+
+      // Разрешаем ожидание логина
+      if (loginResolver) {
+        if (loginTimeoutId) clearTimeout(loginTimeoutId);
+        loginResolver();
+        loginResolver = null;
+        loginTimeoutId = null;
+      }
 
       if (statusState.backendPort) {
         startMessenger(statusState.backendPort).catch((e) => {
           statusState.errorMsg = `Messenger start failed: ${e.message || e}`;
-          console.error("Failed to start messenger:", e);
         });
       }
     }
 
-    // Обработка новых сообщений (для обновления UI)
     if (parsed.type === 'messages.new') {
-      statusState.lastMessageSignal++; // <-- Триггер для перезагрузки chats/messages
-    }
-
-    // Обработка изменений в контактах (например, запрос принят)
-    if (parsed.type === 'messages.new' || parsed.type === 'contact.request.accepted') {
-      // Можно добавить дополнительную логику, если нужно
+      statusState.lastMessageSignal++; // Триггер для обновления UI
     }
   } catch (e) {
-    console.warn("Failed to parse signal:", rawJson);
+    console.warn("Failed to parse signal:", rawJson, { cause: e });
   }
 }
+
+/**
+ * Ожидает сигнал node.login.
+ * @param timeoutMs - Таймаут в миллисекундах (по умолчанию 30 секунд)
+ */
+export function waitForLogin(timeoutMs = 30000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (statusState.isLoggedIn) return resolve();
+
+    loginResolver = resolve;
+
+    loginTimeoutId = setTimeout(() => {
+      if (loginResolver === resolve) {
+        loginResolver = null;
+        loginTimeoutId = null;
+        reject(new Error("Login timeout: no response from backend"));
+      }
+    }, timeoutMs);
+  });
+}
+
+export function setAccounts(accounts: any[]) {
+  statusState.accounts = accounts;
+}
+
+export function setNetworkInfo(
+  networkName: string,
+  rpcUrl: string,
+  wakuFleet: string,
+  isTestnet: boolean,
+  chainId: number
+) {
+  statusState.networkName = networkName;
+  statusState.rpcUrl = rpcUrl;
+  statusState.wakuFleet = wakuFleet;
+  statusState.isTestnet = isTestnet;
+  statusState.chainId = chainId;
+}
+
+export function setPendingRequestsCount(count: number) {
+  statusState.pendingRequestsCount = count;
+}
+
 export async function logout() {
   if (!statusState.backendPort) return;
 
@@ -88,10 +140,15 @@ export async function logout() {
     console.warn("Logout API call failed:", e);
   }
 
+  // Сбрасываем сессию, но оставляем настройки сети и список аккаунтов
   statusState.isLoggedIn = false;
   statusState.accountKeyUid = '';
+  statusState.publicKey = '';
+  statusState.alias = '';
   statusState.events = [];
   statusState.errorMsg = '';
+  statusState.pendingRequestsCount = 0;
+  statusState.lastMessageSignal = 0;
 }
 
 export function resetState() {
@@ -99,9 +156,10 @@ export function resetState() {
   statusState.isConnecting = false;
   statusState.isLoggedIn = false;
   statusState.accountKeyUid = '';
+  statusState.publicKey = '';
+  statusState.alias = '';
   statusState.events = [];
   statusState.backendPort = null;
-  statusState.publicKey = '';
   statusState.backendDataDir = '';
   statusState.errorMsg = '';
   statusState.accounts = [];
@@ -109,16 +167,7 @@ export function resetState() {
   statusState.rpcUrl = '';
   statusState.wakuFleet = 'status.prod';
   statusState.isTestnet = false;
-}
-
-export function setPublicKey(key: string) {
-  statusState.publicKey = key;
-}
-
-export function setPendingRequestsCount(count: number) {
-  statusState.pendingRequestsCount = count;
-}
-
-export function setAlias(alias: string) {
-  statusState.alias = alias;
+  statusState.chainId = 1;
+  statusState.pendingRequestsCount = 0;
+  statusState.lastMessageSignal = 0;
 }

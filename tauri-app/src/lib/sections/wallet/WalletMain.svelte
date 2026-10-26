@@ -70,7 +70,7 @@
     <!-- Список токенов -->
     <ScrollArea class="flex-1 -mx-2 px-2">
       <div class="space-y-1">
-        {#each tokens as token}
+        {#each tokens as token (token.symbol)}
           <button class="w-full text-left p-3 rounded-lg hover:bg-secondary flex items-center justify-between transition-colors">
             <div class="flex items-center gap-3">
               <!-- Иконка токена (заглушка) -->

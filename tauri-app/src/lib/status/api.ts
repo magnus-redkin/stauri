@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { statusFetch } from "./http";
-import type { StartBackendResponse, InitializeResponse } from "./types";
+import type { StartBackendResponse } from "./types";
 
 /**
  * Запускает локальный бэкенд и возвращает порт и путь к данным
@@ -30,7 +30,6 @@ export async function initializeApplication(port: number, dataDir: string, netwo
  * Создает аккаунт и логинит в него
  */
 export async function createAccountAndLogin(port: number, dataDir: string, password: string): Promise<any> {
-  console.log("API: Вызов CreateAccountAndLogin с dataDir:", dataDir);
   return await statusFetch(port, "CreateAccountAndLogin", {
     rootDataDir: dataDir,
     displayName: "Stauri User",
@@ -56,7 +55,6 @@ export async function startMessenger(port: number): Promise<any> {
  */
 
 export async function loginAccount(port: number, password: string, keyUid: string): Promise<any> {
-  console.log("API loginAccount:", { port, password, keyUid });
   return await statusFetch(port, "LoginAccount", {
     password: password,
     keyUid: keyUid
@@ -187,6 +185,40 @@ export async function acceptContactRequest(port: number, contactPublicKey: strin
     method: "wakuext_acceptLatestContactRequestForContact",
     params: [{
       id: contactPublicKey
+    }]
+  });
+}
+
+/**
+ * Получает настройки с мнемоникой (seed-фразой).
+ * В отличие от getSettings, возвращает только мнемонику.
+ */
+export async function getSettingsWithMnemonic(port: number): Promise<string | null> {
+  try {
+    const res = await statusFetch(port, "CallRPC", {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "settings_getSettings",
+      params: []
+    });
+    return res.result?.mnemonic || null;
+  } catch (e) {
+    console.warn("Failed to get mnemonic:", e);
+    return null;
+  }
+}
+
+/**
+ * Отправляет запрос в контакты по публичному ключу.
+ */
+export async function sendContactRequest(port: number, publicKey: string, message: string = ""): Promise<any> {
+  return await statusFetch(port, "CallRPC", {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "wakuext_sendContactRequest",
+    params: [{
+      id: publicKey,
+      message: message
     }]
   });
 }

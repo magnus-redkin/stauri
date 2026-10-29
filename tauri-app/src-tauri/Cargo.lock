@@ -3930,6 +3930,7 @@ name = "tauri-app"
 version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tauri",
@@ -3938,6 +3939,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-shell",
  "tauri-plugin-websocket",
+ "tokio",
 ]
 
 [[package]]

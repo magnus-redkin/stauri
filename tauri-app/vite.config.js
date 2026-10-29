@@ -20,6 +20,7 @@ export default defineConfig(({ mode }) => ({
     globals: true,
     setupFiles: ['./src/test-setup.ts'],
     // Строка projects: [] удалена
+    // isolate: false,
   },
 
   // Tauri development options

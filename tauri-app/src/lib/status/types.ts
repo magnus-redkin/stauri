@@ -1,6 +1,11 @@
 export interface StartBackendResponse {
   port: number;
   dataDir: string;
+  networkName: string;
+  chainId: number;
+  rpcUrl: string;
+  wakuFleet: string;
+  isTestnet: boolean;
 }
 
 export interface InitializeResponse {
@@ -21,6 +26,8 @@ export interface NodeLoginEvent extends StatusEventBase {
       'display-name': string;
       'public-key': string;
       mnemonic: string;
+      /** Трёхсловный псевдоним, например "Sarcastic Kind Eidolonhelvum". */
+      alias?: string;
     };
   };
 }

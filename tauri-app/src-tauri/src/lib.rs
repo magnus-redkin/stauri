@@ -2,8 +2,11 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_shell::{ShellExt, process::CommandChild};
 use std::sync::Mutex;
 use std::net::TcpListener;
+use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
+
+mod rpc_proxy;
 
 #[derive(Serialize)]
 struct StartBackendResponse {
@@ -22,13 +25,13 @@ struct StartBackendResponse {
   is_testnet: bool,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Debug)]
 struct AppConfig {
     ethereum: Option<EthereumConfig>,
     waku: Option<WakuConfig>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Debug)]
 struct EthereumConfig {
     preset: Option<String>,
     #[serde(default = "default_chain_id")]
@@ -36,7 +39,7 @@ struct EthereumConfig {
     rpc_url: Option<String>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Debug)]
 struct WakuConfig {
     fleet: Option<String>,
 }
@@ -79,12 +82,8 @@ impl AppConfig {
     }
 
     fn data_dir_suffix(&self) -> PathBuf {
-        let network = self.network_name();
-        if network == "mainnet" {
-            PathBuf::new()
-        } else {
-            PathBuf::from(&network)
-        }
+      let network = self.network_name();
+      PathBuf::from(&network)
     }
 }
 
@@ -390,6 +389,41 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+// =========================================================================
+// ЛОКАЛЬНЫЙ RPC-ФОРВАРДЕР
+//
+// status-go залипает на мёртвых TCP-соединениях из своего пула: сокет
+// остаётся ESTAB, ответов нет, запрос висит до таймаута circuit breaker'а.
+// Форвардер открывает свежее соединение на каждый запрос, как это делает
+// curl, и поэтому работает там, где прямой вызов провайдера не проходит.
+// =========================================================================
+
+/// Запускает форвардер и возвращает порт.
+#[tauri::command]
+async fn start_rpc_proxy(app: tauri::AppHandle) -> Result<u16, String> {
+    let state = app.state::<rpc_proxy::RpcProxyState>();
+    rpc_proxy::start(&state, HashMap::new()).await
+}
+
+/// Задаёт, куда проксировать запросы для каждой сети.
+/// `upstreams` — map chainId -> URL провайдера.
+#[tauri::command]
+fn set_rpc_upstreams(
+    app: tauri::AppHandle,
+    upstreams: HashMap<u64, String>,
+) -> Result<(), String> {
+    let state = app.state::<rpc_proxy::RpcProxyState>();
+    rpc_proxy::set_upstreams(&state, upstreams);
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_rpc_proxy(app: tauri::AppHandle) -> Result<(), String> {
+    let state = app.state::<rpc_proxy::RpcProxyState>();
+    rpc_proxy::stop(&state);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -402,11 +436,23 @@ pub fn run() {
             port: Mutex::new(None),
             data_dir: Mutex::new(None),
         })
-        .invoke_handler(tauri::generate_handler![greet, start_backend, stop_backend, open_dapp_window])
+        .manage(rpc_proxy::RpcProxyState::default())
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            start_backend,
+            stop_backend,
+            open_dapp_window,
+            start_rpc_proxy,
+            set_rpc_upstreams,
+            stop_rpc_proxy
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {
             if let tauri::RunEvent::Exit = event {
+                let proxy_state = app_handle.state::<rpc_proxy::RpcProxyState>();
+                rpc_proxy::stop(&proxy_state);
+
                 let state = app_handle.state::<BackendState>();
                 let mut child_lock = state.child.lock().unwrap();
                 if let Some(child) = child_lock.take() {
@@ -478,7 +524,9 @@ mod tests {
         assert_eq!(config.rpc_url(), "https://ethereum-rpc.publicnode.com");
         assert_eq!(config.waku_fleet(), "status.prod");
         assert!(!config.is_testnet());
-        assert_eq!(config.data_dir_suffix(), PathBuf::new());
+        // data_dir_suffix всегда возвращает имя сети, включая mainnet:
+        // иначе каталоги mainnet и тестнетов смешиваются в одном месте.
+        assert_eq!(config.data_dir_suffix(), PathBuf::from("mainnet"));
     }
 
     #[test]

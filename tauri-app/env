@@ -1,0 +1,10 @@
+{
+  "env": {
+    "ANTHROPIC_AUTH_TOKEN": "$PLUSVIBE_API_KEY",
+    "ANTHROPIC_BASE_URL": "https://plusvibeapi.ru",
+    "ANTHROPIC_API_KEY": "",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL":   "claude-opus-4.8",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL":  "claude-haiku-4.5"
+  }
+}

@@ -56,12 +56,19 @@ describe('Status API', () => {
 
       await api.createAccountAndLogin(8080, '/tmp/data', 'supersecret');
 
-      expect(http.statusFetch).toHaveBeenCalledWith(8080, 'CreateAccountAndLogin', {
-        rootDataDir: '/tmp/data',
-        displayName: 'Stauri User',
-        password: 'supersecret',
-        customizationColor: 'primary'
-      });
+      // Ключи RPC приходят из .env и в тестах отсутствуют, поэтому проверяем
+      // только поля, которые формирует сам код.
+      expect(http.statusFetch).toHaveBeenCalledWith(
+        8080,
+        'CreateAccountAndLogin',
+        expect.objectContaining({
+          rootDataDir: '/tmp/data',
+          displayName: 'Stauri User',
+          password: 'supersecret',
+          customizationColor: 'primary',
+          statusProxyStageName: 'prod',
+        })
+      );
     });
   });
 
@@ -71,10 +78,15 @@ describe('Status API', () => {
 
       await api.loginAccount(8080, 'supersecret', 'test-123');
 
-      expect(http.statusFetch).toHaveBeenCalledWith(8080, 'LoginAccount', {
-        password: 'supersecret',
-        keyUid: 'test-123'
-      });
+      expect(http.statusFetch).toHaveBeenCalledWith(
+        8080,
+        'LoginAccount',
+        expect.objectContaining({
+          password: 'supersecret',
+          keyUid: 'test-123',
+          statusProxyStageName: 'prod',
+        })
+      );
     });
   });
 

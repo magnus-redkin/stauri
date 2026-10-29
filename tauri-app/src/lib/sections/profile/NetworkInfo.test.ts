@@ -10,7 +10,7 @@ describe('NetworkInfo Component', () => {
   });
 
   it('должен корректно отображать информацию о Mainnet', () => {
-    setNetworkInfo('mainnet', 'https://ethereum-rpc.publicnode.com', 'status.prod', false);
+    setNetworkInfo('mainnet', 'https://ethereum-rpc.publicnode.com', 'status.prod', false, 1);
 
     render(NetworkInfo);
 
@@ -26,7 +26,7 @@ describe('NetworkInfo Component', () => {
   });
 
   it('должен корректно отображать информацию о Sepolia Testnet', () => {
-    setNetworkInfo('sepolia', 'https://rpc.sepolia.org', 'status.test', true);
+    setNetworkInfo('sepolia', 'https://rpc.sepolia.org', 'status.test', true, 11155111);
 
     render(NetworkInfo);
 
@@ -41,7 +41,7 @@ describe('NetworkInfo Component', () => {
   });
 
   it('должен корректно отображать информацию о Holesky Testnet', () => {
-    setNetworkInfo('holesky', 'https://ethereum-holesky-rpc.publicnode.com', 'status.test', true);
+    setNetworkInfo('holesky', 'https://ethereum-holesky-rpc.publicnode.com', 'status.test', true, 17000);
 
     render(NetworkInfo);
 

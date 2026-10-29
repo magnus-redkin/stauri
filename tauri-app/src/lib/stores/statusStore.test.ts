@@ -8,6 +8,8 @@ vi.mock('$lib/status/api', () => ({
   logout: vi.fn().mockResolvedValue({})
 }));
 
+vi.spyOn(console, 'warn').mockImplementation(() => {});
+
 describe('statusStore', () => {
   beforeEach(() => {
     resetState();
@@ -27,7 +29,7 @@ describe('statusStore', () => {
 
   describe('setNetworkInfo', () => {
     it('должен обновлять сетевую информацию', () => {
-      setNetworkInfo('sepolia', 'https://rpc.sepolia.org', 'status.test', true);
+      setNetworkInfo('sepolia', 'https://rpc.sepolia.org', 'status.test', true, 11155111);
       expect(statusState.networkName).toBe('sepolia');
       expect(statusState.rpcUrl).toBe('https://rpc.sepolia.org');
       expect(statusState.wakuFleet).toBe('status.test');
@@ -35,7 +37,7 @@ describe('statusStore', () => {
     });
 
     it('должен устанавливать mainnet', () => {
-      setNetworkInfo('mainnet', 'https://ethereum-rpc.publicnode.com', 'status.prod', false);
+      setNetworkInfo('mainnet', 'https://ethereum-rpc.publicnode.com', 'status.prod', false, 1);
       expect(statusState.networkName).toBe('mainnet');
       expect(statusState.isTestnet).toBe(false);
     });
@@ -62,7 +64,7 @@ describe('statusStore', () => {
   describe('resetState', () => {
     it('должен сбрасывать все поля к дефолтным значениям', () => {
       // Устанавливаем кастомные значения
-      setNetworkInfo('sepolia', 'https://rpc.sepolia.org', 'status.test', true);
+      setNetworkInfo('sepolia', 'https://rpc.sepolia.org', 'status.test', true, 11155111);
       setAccounts([{ 'key-uid': 'uid-1' }]);
       statusState.isConnected = true;
       statusState.isConnecting = true; // <-- Добавлено
@@ -91,8 +93,10 @@ describe('statusStore', () => {
   });
 
   describe('processSignal', () => {
-    it('должен обрабатывать сигнал node.login и вызывать startMessenger', () => {
-      // Устанавливаем порт, чтобы startMessenger вызвался
+    it('должен обрабатывать сигнал node.login, не запуская messenger', () => {
+      // Messenger стартует из connectionStore после configureWalletRpc:
+      // RPC-клиенты кэшируются по chainID, и запуск раньше прописки
+      // провайдеров оставил бы их с мёртвыми URL.
       statusState.backendPort = 12345;
 
       const loginSignal = JSON.stringify({
@@ -108,7 +112,7 @@ describe('statusStore', () => {
 
       expect(statusState.isLoggedIn).toBe(true);
       expect(statusState.accountKeyUid).toBe('test-uid-123');
-      expect(startMessenger).toHaveBeenCalledWith(12345); // <-- Проверка
+      expect(startMessenger).not.toHaveBeenCalled();
     });
 
     it('должен обрабатывать ошибку входа', () => {

@@ -1,32 +1,36 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import WebSocket from '@tauri-apps/plugin-websocket';
 
+  // Сторы
   import {
     statusState,
-    processSignal,
     resetState,
-    setAccounts,
-    setNetworkInfo,
-    setPendingRequestsCount,
     logout,
-    waitForLogin,
-    setSeedSaved
+    setSeedSaved,
+    setPendingRequestsCount
   } from '$lib/stores/statusStore.svelte';
 
   import {
-    startBackend,
-    stopBackend,
-    initializeApplication,
-    loginAccount,
-    createAccountAndLogin,
-    getChats as apiGetChats,
-    getContacts
-  } from '$lib/status/api';
+    connectionState,
+    connect,
+    changeNetwork,
+    login,
+    createAccount,
+    disconnect
+  } from '$lib/stores/connectionStore.svelte';
 
-  import { getDisplayName } from '$lib/utils/user';
+  import { resetContacts } from '$lib/stores/contactsStore.svelte';
+  import { chatsState, loadChats, selectChat, resetChats } from '$lib/stores/chatsStore.svelte';
+  import {
+    walletState,
+    loadWallet,
+    resetWallet,
+    startWalletPolling,
+    stopWalletPolling
+  } from '$lib/stores/walletStore.svelte';
 
+  // UI
   import { PaneGroup, Pane, PaneResizer } from "paneforge";
   import SidebarIcons from "$lib/sections/layout/SidebarIcons.svelte";
   import MainEntryScreen from "$lib/sections/auth/MainEntryScreen.svelte";
@@ -43,30 +47,35 @@
   import WalletLeft from "$lib/sections/wallet/WalletLeft.svelte";
   import WalletMain from "$lib/sections/wallet/WalletMain.svelte";
   import MarketMain from "$lib/sections/market/MarketMain.svelte";
-  import ChatLeft, { type ChatItem } from "$lib/sections/chat/ChatLeft.svelte";
+  import ChatLeft from "$lib/sections/chat/ChatLeft.svelte";
   import ChatMain from "$lib/sections/chat/ChatMain.svelte";
 
+
+  // 🔥 ЖЕСТКИЙ ТЕСТ ЧТЕНИЯ .ENV НА СТОРОНЕ VITE
+  const debugAlchemy = import.meta.env.VITE_ALCHEMY_KEY;
+  const debugInfura = import.meta.env.VITE_INFURA_KEY;
+
+  console.log("=========================================");
+  console.log("🚨 [Vite ENV Verification]");
+  console.log("VITE_ALCHEMY_KEY:", debugAlchemy ? "✅ НАЙДЕН (..." + debugAlchemy.slice(-5) + ")" : "❌ UNDEFINED!");
+  console.log("VITE_INFURA_KEY:", debugInfura ? "✅ НАЙДЕН (..." + debugInfura.slice(-5) + ")" : "❌ UNDEFINED!");
+  console.log("=========================================");
+
+  if (!debugAlchemy || !debugInfura) {
+    console.error("💥 КРИТИЧЕСКАЯ ОШИБКА: Vite не смог прочитать .env файл! Балансы кошелька не будут работать.");
+  }
+
+
+  // Навигация
   let activeSection = $state('home');
-  let ws: WebSocket | null = null;
-  let selectedAccountKeyUid = $state('');
-  let hasProfiles = $state(false);
-  let selectedNetwork = $state('mainnet');
   let showRecovery = $state(false);
   let showCreateSeed = $state(false);
 
-  let chats = $state<ChatItem[]>([]);
-  let allContacts = $state<any[]>([]);
-  let selectedChat = $state<ChatItem | null>(null);
-  let selectedContact = $state<any>(null);
+  // Выбор аккаунта для логина
+  let selectedAccountKeyUid = $state('');
+  let selectedNetwork = $state('mainnet');
 
-  // Флаг, предотвращающий бесконечный цикл загрузки чатов
-  let chatsLoaded = $state(false);
-
-  $effect(() => {
-    if (activeSection !== 'profile') {
-      showCreateSeed = false;
-    }
-  });
+  const hasProfiles = $derived(statusState.accounts.length > 0); // <-- Добавить
 
   // Ctrl+Q
   $effect(() => {
@@ -80,202 +89,88 @@
     return () => window.removeEventListener('keydown', handleKeyDown);
   });
 
-  // Реагируем на новые сообщения (если мы на вкладке чата)
+  // Реагируем на новые сообщения (через lastMessageSignal)
   $effect(() => {
-    if (statusState.isLoggedIn && activeSection === 'chat' && !chatsLoaded) {
-      loadChatsAndRequests();
+    if (statusState.lastMessageSignal > 0 && activeSection === 'chat') {
+      loadChats(true);
     }
-    // Если ушли с вкладки Chat, сбрасываем флаг, чтобы при возврате загрузить заново
-    if (activeSection !== 'chat') {
-      chatsLoaded = false;
+  });
+
+  // Сбрасываем CreateSeed при уходе с Profile
+  $effect(() => {
+    if (activeSection !== 'profile') {
+      showCreateSeed = false;
     }
+  });
+
+
+  // wallet
+  // fetchOrGetCachedWalletBalances читает кэш бэкенда (forceRefresh в status-go
+  // игнорируется), поэтому балансы нужно перечитывать периодически.
+  $effect(() => {
+    if (statusState.isLoggedIn && activeSection === 'wallet') {
+      loadWallet();
+      startWalletPolling();
+      return () => stopWalletPolling();
+    }
+    stopWalletPolling();
   });
 
   onMount(async () => {
-    // Передаем undefined, чтобы Rust взял сеть из конфига (или mainnet по умолчанию)
-    await loadAccountsForNetwork(undefined);
+    await connect(undefined);
+    if (statusState.accounts.length > 0) {
+      selectedAccountKeyUid = statusState.accounts[0]["key-uid"];
+    }
   });
 
-  async function loadAccountsForNetwork(network?: string) {
-    if (statusState.isConnecting) return;
-
-    if (statusState.backendPort) {
-      try { await stopBackend(); } catch (e) { console.warn("stopBackend failed:", e); }
-      await new Promise(r => setTimeout(r, 500));
-      statusState.isConnected = false;
-      statusState.backendPort = null;
-    }
-
-    statusState.isConnecting = true;
-    statusState.errorMsg = '';
-
-    try {
-      const backendInfo = await startBackend(network);
-      statusState.backendPort = backendInfo.port;
-      statusState.backendDataDir = backendInfo.dataDir;
-
-      // Обновляем локальное состояние сети
-      selectedNetwork = backendInfo.networkName;
-
-      await new Promise(resolve => setTimeout(resolve, 1500));
-
-      const initData = await initializeApplication(
-        statusState.backendPort,
-        statusState.backendDataDir,
-        backendInfo.chainId
-      );
-
-      if (initData.accounts && initData.accounts.length > 0) {
-        setAccounts(initData.accounts);
-        selectedAccountKeyUid = initData.accounts[0]["key-uid"];
-        hasProfiles = true;
-      } else {
-        setAccounts([]);
-        selectedAccountKeyUid = '';
-        hasProfiles = false;
-      }
-
-      setNetworkInfo(
-        backendInfo.networkName,
-        backendInfo.rpcUrl,
-        backendInfo.wakuFleet,
-        backendInfo.isTestnet,
-        backendInfo.chainId
-      );
-
-      statusState.isConnected = true;
-    } catch (e: any) {
-      statusState.errorMsg = `Failed to load accounts: ${e?.message || e}`;
-      statusState.isConnected = false;
-      statusState.backendPort = null;
-    } finally {
-      statusState.isConnecting = false;
-    }
-  }
-
   async function handleNetworkChange(network: string) {
-    await loadAccountsForNetwork(network);
+    await changeNetwork(network);
+    selectedNetwork = network;
   }
 
-  async function reconnectWs(port: number) {
-    if (ws) {
-      try { await ws.disconnect(); } catch (e) { console.warn("ws.disconnect failed:", e); }
-      ws = null;
-    }
-    ws = await WebSocket.connect(`ws://127.0.0.1:${port}/signals`);
-    ws.addListener((msg) => processSignal(msg.data));
-  }
-
-  async function handleLogin(loginPassword: string) {
-    if (!statusState.backendPort || !loginPassword || !selectedAccountKeyUid) return;
-
+  async function handleLogin(password: string) {
+    if (!selectedAccountKeyUid) return;
     try {
-      // Подключаем WS (если еще не подключен)
-      if (!ws) await reconnectWs(statusState.backendPort);
-
-      await loginAccount(statusState.backendPort, loginPassword, selectedAccountKeyUid);
-
-      // Ждем сигнал node.login (до 30 сек)
-      await waitForLogin(30000);
-
+      await login(password, selectedAccountKeyUid);
       activeSection = 'home';
     } catch (e: any) {
       statusState.errorMsg = `Login failed: ${e.message}`;
     }
   }
 
-  async function handleCreateAccount(newPassword: string) {
-    if (!statusState.backendPort) {
-      await loadAccountsForNetwork(selectedNetwork);
-    }
-
-    if (statusState.backendPort && statusState.backendDataDir) {
-      statusState.isConnecting = true;
-      try {
-        // Подключаем WS заранее
-        if (!ws) await reconnectWs(statusState.backendPort);
-
-        const createResult = await createAccountAndLogin(
-          statusState.backendPort,
-          statusState.backendDataDir,
-          newPassword
-        );
-
-        if (createResult?.error) throw new Error(createResult.error);
-
-        // Ждем сигнал node.login (до 30 сек)
-        await waitForLogin(30000);
-
-        hasProfiles = true;
-        activeSection = 'home';
-      } catch (e: any) {
-        statusState.errorMsg = `Create account failed: ${e.message}`;
-      } finally {
-        statusState.isConnecting = false;
+  async function handleCreateAccount(password: string) {
+    try {
+      await createAccount(password);
+      // После создания аккаунт автоматически логинится (через waitForLogin)
+      if (statusState.accounts.length > 0) {
+        selectedAccountKeyUid = statusState.accounts[0]["key-uid"];
       }
+      activeSection = 'home';
+    } catch (e: any) {
+      statusState.errorMsg = `Create account failed: ${e.message}`;
     }
   }
 
-  async function loadChatsAndRequests(force = false) {
-    if (!statusState.backendPort) return;
-    if (chatsLoaded && !force) return; // Предотвращаем бесконечный цикл
-
-    try {
-      const chatsRes = await apiGetChats(statusState.backendPort);
-      const rawChats = chatsRes.result || [];
-
-      const contactsRes = await getContacts(statusState.backendPort);
-      allContacts = contactsRes.result || [];
-
-      chats = rawChats.map((c: any) => {
-        const contact = allContacts.find((ct: any) => ct.id === c.id);
-        const name = contact ? getDisplayName(contact) : getDisplayName(c);
-
-        return {
-          id: c.id,
-          name,
-          lastMessage: c.lastMessage?.text || '',
-          type: 'status' as const,
-          isPendingRequest: c.active === false && c.lastMessage?.contactRequestState === 1,
-        };
-      });
-
-      const pendingCount = chats.filter(c => c.isPendingRequest).length;
-      setPendingRequestsCount(pendingCount);
-
-      chatsLoaded = true; // Загрузка завершена
-    } catch (e) {
-      console.warn("Failed to load chats:", e);
-    }
+  function handleOpenChat(chatId: string) {
+    activeSection = 'chat';
+    selectChat(chatId);
   }
 
   async function handleDisconnect() {
-    if (ws) {
-      try { await ws.disconnect(); } catch (e) { console.warn("ws.disconnect failed:", e); }
-      ws = null;
-    }
-
-    // Logout перед убийством бэкенда
     await logout();
-
-    try {
-      await stopBackend();
-    } catch (e) {
-      console.warn("Failed to stop backend:", e);
-    }
-
-    await new Promise(r => setTimeout(r, 500));
+    await disconnect();
     resetState();
-
-    // Сбрасываем локальные флаги
-    hasProfiles = false;
+    resetContacts();
+    resetChats();
+    resetWallet();
+    setPendingRequestsCount(0);
+    showCreateSeed = false;
     selectedAccountKeyUid = '';
-    chatsLoaded = false;
-    chats = [];
-    selectedChat = null;
-
-    // Перезапускаем для Mainnet (или из конфига)
-    await loadAccountsForNetwork(undefined);
+    activeSection = 'home';
+    await connect(undefined);
+    if (statusState.accounts.length > 0) {
+      selectedAccountKeyUid = statusState.accounts[0]["key-uid"];
+    }
   }
 </script>
 
@@ -288,7 +183,7 @@
   {/if}
 
   <!-- Спиннер -->
-  {#if statusState.isConnecting}
+  {#if connectionState.isConnecting}
     <div class="flex flex-col items-center justify-center min-h-screen gap-4">
       <div class="w-10 h-10 border-4 border-muted border-t-primary rounded-full animate-spin"></div>
       <h2 class="text-2xl font-semibold text-foreground">Connecting...</h2>
@@ -327,30 +222,21 @@
           {#if activeSection === 'home' || activeSection === 'profile'}
             <ProfileLeft
               onDisconnect={handleDisconnect}
-              onCreateSeed={() => {
-              console.log("onCreateSeed called, setting showCreateSeed = true");
-              activeSection = 'profile'; // <-- Переключаем на профиль
-              showCreateSeed = true;
-              }}
-
-              />
+              onCreateSeed={() => { activeSection = 'profile'; showCreateSeed = true; }}
+            />
           {:else if activeSection === 'contacts'}
-            <ContactsLeft
-              onSelectContact={(c) => selectedContact = c}
-              onAddContact={() => selectedContact = null}
-              />
+            <ContactsLeft />
           {:else if activeSection === 'settings'}
             <SettingsLeft />
           {:else if activeSection === 'wallet'}
             <WalletLeft onNavigate={(s) => activeSection = s} />
           {:else if activeSection === 'chat'}
-            <ChatLeft
-              items={chats}
-              selectedChatId={selectedChat?.id || null}
-              onSelectChat={(item) => selectedChat = item}
-              />
+            <ChatLeft onSelectChat={(chat) => selectChat(chat.id)} />
           {:else}
-            <ProfileLeft onDisconnect={handleDisconnect} />
+            <ProfileLeft
+              onDisconnect={handleDisconnect}
+              onCreateSeed={() => { activeSection = 'profile'; showCreateSeed = true; }}
+            />
           {/if}
         </Pane>
 
@@ -365,18 +251,15 @@
               <CreateSeed
                 onBack={() => showCreateSeed = false}
                 onSave={() => {
-                setSeedSaved(true);
-                showCreateSeed = false;
+                  setSeedSaved(true);
+                  showCreateSeed = false;
                 }}
-                />
-              {:else}
-                <EditProfile onNavigate={(s) => activeSection = s} />
-              {/if}
-            {:else if activeSection === 'contacts'}
-              <ContactsMain
-                selectedContact={selectedContact}
-                onClearSelection={() => selectedContact = null}
-                />
+              />
+            {:else}
+              <EditProfile onNavigate={(s) => activeSection = s} />
+            {/if}
+          {:else if activeSection === 'contacts'}
+            <ContactsMain onOpenChat={handleOpenChat} />
           {:else if activeSection === 'settings'}
             <SettingsMain />
           {:else if activeSection === 'wallet'}
@@ -384,13 +267,9 @@
           {:else if activeSection === 'market'}
             <MarketMain />
           {:else if activeSection === 'chat'}
-            <ChatMain
-              chat={selectedChat}
-              contacts={allContacts}
-              onRefresh={() => loadChatsAndRequests(true)}
-            />
+            <ChatMain />
           {:else}
-            <HomeMain />
+            <HomeMain onNavigate={(s) => activeSection = s} />
           {/if}
         </Pane>
       </PaneGroup>

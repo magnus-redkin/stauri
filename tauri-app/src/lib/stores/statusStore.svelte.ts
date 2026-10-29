@@ -25,6 +25,8 @@ export const statusState = $state({
 
 let loginResolver: (() => void) | null = null;
 let loginTimeoutId: ReturnType<typeof setTimeout> | null = null;
+let stoppedResolver: (() => void) | null = null;
+let stoppedTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
 export function processSignal(rawJson: string) {
   if (!rawJson) return;
@@ -59,12 +61,50 @@ export function processSignal(rawJson: string) {
       // после configureWalletRpc().
     }
 
+    if (parsed.type === 'node.stopped') {
+      // Нода остановилась: isLoggedIn больше не соответствует реальности.
+      // Без этого повторный waitForLogin() разрешился бы мгновенно на старом
+      // флаге, и перезапуск ноды «проходил» бы, ничего не дождавшись.
+      statusState.isLoggedIn = false;
+      if (stoppedResolver) {
+        if (stoppedTimeoutId) clearTimeout(stoppedTimeoutId);
+        stoppedResolver();
+        stoppedResolver = null;
+        stoppedTimeoutId = null;
+      }
+    }
+
     if (parsed.type === 'messages.new') {
       statusState.lastMessageSignal++;
     }
   } catch (e) {
     console.warn("Failed to parse signal:", rawJson);
   }
+}
+
+/**
+ * Ждёт сигнал node.stopped.
+ *
+ * Нужен для перезапуска ноды: logout останавливает её асинхронно, и повторный
+ * вход возможен только после того, как нода действительно встала. Иначе
+ * второй loginAccount приходит к ещё живому узлу, а флаг isLoggedIn остаётся
+ * старым — и перезапуск оказывается пустым.
+ *
+ * Таймаут не ошибка: если сигнал не пришёл за отведённое время, продолжаем —
+ * хуже от этого не станет, а вечное ожидание заблокировало бы вход.
+ */
+export function waitForNodeStopped(timeoutMs = 15000): Promise<void> {
+  return new Promise((resolve) => {
+    stoppedResolver = resolve;
+    stoppedTimeoutId = setTimeout(() => {
+      if (stoppedResolver === resolve) {
+        stoppedResolver = null;
+        stoppedTimeoutId = null;
+        console.warn('[status] node.stopped не пришёл за отведённое время');
+      }
+      resolve();
+    }, timeoutMs);
+  });
 }
 
 export function waitForLogin(timeoutMs = 30000): Promise<void> {

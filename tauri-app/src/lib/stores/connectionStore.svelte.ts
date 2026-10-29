@@ -1,4 +1,11 @@
-import { statusState, setAccounts, setNetworkInfo, processSignal, waitForLogin } from './statusStore.svelte';
+import {
+  statusState,
+  setAccounts,
+  setNetworkInfo,
+  processSignal,
+  waitForLogin,
+  waitForNodeStopped,
+} from './statusStore.svelte';
 import {
   startBackend,
   stopBackend,
@@ -10,6 +17,7 @@ import {
   startRpcProxy,
   setRpcUpstreams,
   startMessenger,
+  logout as apiLogout,
 } from '$lib/status/api';
 import WebSocket from '@tauri-apps/plugin-websocket';
 
@@ -76,9 +84,19 @@ function alchemyUrlForChain(chainId: number): string | null {
  * кэшируются по chainID в internal/rpc/client.go и не инвалидируются при
  * смене провайдеров, поэтому добавление после первого запроса не подействует
  * до перезапуска ноды.
+ *
+ * Результат {@link ConfigureResult}.
+ *
+ * `wroteProviders` — пришлось ли что-то записывать. Это признак того, что
+ * RPC-клиент мог быть собран не с теми URL: status-go создаёт и кэширует
+ * клиентов при старте ноды, а провайдеры мы пишем уже после. См. login().
  */
-export async function configureWalletRpc(port: number | null = statusState.backendPort): Promise<void> {
-  if (!port) return;
+export type ConfigureResult = { wroteProviders: boolean };
+
+export async function configureWalletRpc(
+  port: number | null = statusState.backendPort
+): Promise<ConfigureResult> {
+  if (!port) return { wroteProviders: false };
 
   // 1. Форвардер поднимаем ПЕРВЫМ и без участия status-go.
   // Его API (networks_*) регистрируется только в initServices, то есть после
@@ -88,10 +106,10 @@ export async function configureWalletRpc(port: number | null = statusState.backe
   // прошлым запуском, и клиент может обратиться к нему сразу.
   let proxyPort: number;
   try {
-    proxyPort = await startRpcProxy();
-    // Пока сети не прочитаны, даём форвардеру статическую таблицу: он не
-    // должен отвечать 503 на первых же запросах.
-    await setRpcUpstreams(PUBLIC_RPC);
+    // Таблица передаётся сразу с запуском: провайдер с прошлого запуска уже
+    // указывает на этот порт, и первый же запрос приходит раньше, чем успела
+    // бы выполниться отдельная команда set_rpc_upstreams.
+    proxyPort = await startRpcProxy(PUBLIC_RPC);
     console.log(`[configureWalletRpc] rpc proxy on 127.0.0.1:${proxyPort}`);
   } catch (e: any) {
     console.warn('[configureWalletRpc] rpc proxy failed, falling back to direct URLs:', e?.message || e);
@@ -125,6 +143,8 @@ export async function configureWalletRpc(port: number | null = statusState.backe
     }
   }
 
+  let wroteProviders = false;
+
   for (const chain of chains) {
     const chainId = Number(chain?.chainId);
     // Имена полей — как в params.Network: enabled и isActive (не active!).
@@ -148,6 +168,7 @@ export async function configureWalletRpc(port: number | null = statusState.backe
 
     try {
       await setChainUserRpcProvider(port, chainId, USER_PROVIDER_NAME, url);
+      wroteProviders = true;
       console.log(
         `[configureWalletRpc] chain ${chainId}: provider ` +
         (existing ? 'updated' : 'added')
@@ -156,6 +177,8 @@ export async function configureWalletRpc(port: number | null = statusState.backe
       console.warn(`[configureWalletRpc] chain ${chainId} failed:`, e?.message || e);
     }
   }
+
+  return { wroteProviders };
 }
 
 export const connectionState = $state({
@@ -251,37 +274,95 @@ async function reconnectWs(port: number) {
 }
 
 /**
+ * Перезапускает ноду один раз, чтобы RPC-клиенты собрались заново.
+ *
+ * Зачем. status-go создаёт и кэширует RPC-клиента при первом обращении к сети
+ * (internal/rpc/client.go, getClientUsingCache) и не инвалидирует кэш до
+ * StatusNode.Stop(). Нода стартует внутри loginAccount, а её кошелёк сразу
+ * запускает фоновый опрос балансов — то есть клиент успевает собраться раньше,
+ * чем мы запишем провайдеров. На чистом профиле (первый вход) это значит, что
+ * клиент собран из встроенных провайдеров, и до перезапуска балансы будут с
+ * ошибкой.
+ *
+ * Порядок: выход → дождаться node.stopped → вход → провайдеры → messenger.
+ * Провайдеры к этому моменту уже лежат в БД, а InitEmbeddedNetworks сохраняет
+ * user-провайдеров при старте (pkg/services/networks/network.go), поэтому
+ * новый клиент собирается уже с ними.
+ *
+ * Перезапуск делается один раз: повторный его результат не изменит, а цикл
+ * входа мы себе позволить не можем.
+ */
+async function restartNodeForProviders(password: string, keyUid: string): Promise<boolean> {
+  const port = statusState.backendPort;
+  if (!port || !keyUid) return false;
+
+  console.log('[login] провайдеры записаны после старта ноды — перезапускаю ноду');
+
+  // Ждать начинаем ДО logout: сигнал node.stopped может прийти раньше, чем
+  // управление вернётся из вызова, и тогда ожидание продлилось бы все 15 с.
+  // Нода останавливается асинхронно; вход до её остановки вернёт тот же
+  // закэшированный клиент.
+  const stopped = waitForNodeStopped(15000);
+  await apiLogout(port);
+  await stopped;
+
+  // Ошибку входа не глотаем: если нода не поднялась, продолжать не с чем —
+  // пусть вызывающий код покажет её пользователю.
+  await loginAccount(port, password, keyUid);
+  await waitForLogin(30000);
+
+  await configureWalletRpc(port);
+  await startMessenger(port);
+  return true;
+}
+
+/**
  * Вход в аккаунт.
  *
  * Порядок важен: сначала прописываем RPC-провайдеры (configureWalletRpc),
  * и только потом стартуем messenger. RPC-клиенты status-go кэшируются по
  * chainID и не инвалидируются, поэтому messenger, запущенный раньше, создаст
  * клиентов с прежними (мёртвыми) URL, и балансы останутся с hasError.
+ *
+ * Если провайдеров пришлось дописывать, значит клиент мог быть собран раньше
+ * них (типичный случай — первый вход на чистом профиле): ноду перезапускаем
+ * один раз, см. restartNodeForProviders.
  */
 export async function login(password: string, keyUid: string) {
   if (!statusState.backendPort) return;
-  if (!ws) await reconnectWs(statusState.backendPort);
-  await loginAccount(statusState.backendPort, password, keyUid);
+  const port = statusState.backendPort;
+  if (!ws) await reconnectWs(port);
+
+  await loginAccount(port, password, keyUid);
   await waitForLogin(30000);
-  await configureWalletRpc();
-  await startMessenger(statusState.backendPort);
+
+  const { wroteProviders } = await configureWalletRpc(port);
+  if (wroteProviders && (await restartNodeForProviders(password, keyUid))) return;
+
+  await startMessenger(port);
 }
 
 /**
  * Создание аккаунта.
+ *
+ * Это заведомо чистый профиль: провайдеров в БД ещё нет, поэтому
+ * configureWalletRpc наверняка что-то запишет, а RPC-клиенты к тому моменту
+ * уже собраны из встроенных. Перезапуск ноды здесь не исключение, а норма —
+ * см. restartNodeForProviders.
  */
 export async function createAccount(password: string) {
   if (!statusState.backendPort) return;
-  if (!ws) await reconnectWs(statusState.backendPort);
-  const createResult = await createAccountAndLogin(
-    statusState.backendPort,
-    statusState.backendDataDir,
-    password
-  );
+  const port = statusState.backendPort;
+  if (!ws) await reconnectWs(port);
+  const createResult = await createAccountAndLogin(port, statusState.backendDataDir, password);
   if (createResult?.error) throw new Error(createResult.error);
   await waitForLogin(30000);
-  await configureWalletRpc();
-  await startMessenger(statusState.backendPort);
+
+  const keyUid = statusState.accountKeyUid;
+  const { wroteProviders } = await configureWalletRpc(port);
+  if (wroteProviders && (await restartNodeForProviders(password, keyUid))) return;
+
+  await startMessenger(port);
 }
 
 /**

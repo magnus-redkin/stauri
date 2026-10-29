@@ -399,10 +399,18 @@ fn greet(name: &str) -> String {
 // =========================================================================
 
 /// Запускает форвардер и возвращает порт.
+///
+/// `upstreams` передаётся сразу при старте, а не отдельной командой: провайдер
+/// с прошлого запуска уже лежит в БД status-go и указывает на наш порт, поэтому
+/// первый же запрос приходит раньше, чем успела бы выполниться вторая команда.
+/// Форвардер без таблицы отвечает 503 — именно это и наблюдалось на старте.
 #[tauri::command]
-async fn start_rpc_proxy(app: tauri::AppHandle) -> Result<u16, String> {
+async fn start_rpc_proxy(
+    app: tauri::AppHandle,
+    upstreams: HashMap<u64, String>,
+) -> Result<u16, String> {
     let state = app.state::<rpc_proxy::RpcProxyState>();
-    rpc_proxy::start(&state, HashMap::new()).await
+    rpc_proxy::start(&state, upstreams).await
 }
 
 /// Задаёт, куда проксировать запросы для каждой сети.

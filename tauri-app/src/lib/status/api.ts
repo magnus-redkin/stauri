@@ -85,9 +85,13 @@ export async function stopBackend(): Promise<void> {
  * Нужен из-за залипания TCP-соединений в пуле status-go: сокет остаётся
  * ESTAB, ответов нет, запрос висит до таймаута circuit breaker'а.
  * Форвардер открывает свежее соединение на каждый запрос (как curl).
+ *
+ * `upstreams` передаётся сразу: провайдер с прошлого запуска уже лежит в БД
+ * status-go и указывает на наш порт, поэтому первый запрос может прийти раньше
+ * любой второй команды. Форвардер без таблицы отвечает 503.
  */
-export async function startRpcProxy(): Promise<number> {
-  return await invoke<number>('start_rpc_proxy');
+export async function startRpcProxy(upstreams: Record<number, string> = {}): Promise<number> {
+  return await invoke<number>('start_rpc_proxy', { upstreams });
 }
 
 /** Задаёт upstream-URL для каждой сети: map chainId -> URL провайдера. */
@@ -190,6 +194,24 @@ export async function getBalances(port: number, addresses: string[], forceRefres
     method: "wallet_fetchOrGetCachedWalletBalances",
     params: [addresses, forceRefresh]
   });
+}
+
+/**
+ * Аккаунты профиля.
+ *
+ * Нужны, чтобы узнать адреса, по которым бэкенд реально считает балансы:
+ * контроллер берёт их из keypairs_accounts с фильтром chat = 0 (см.
+ * internal/db/multiaccounts/accounts/database.go, GetWalletAddresses).
+ * Поле chat=true — это адрес для чатов, у него нет кошелька.
+ */
+export async function getAccounts(port: number): Promise<any[]> {
+  const res = await statusFetch<{ result?: any[] }>(port, "CallRPC", {
+    jsonrpc: "2.0",
+    id: 5,
+    method: "accounts_getAccounts",
+    params: []
+  });
+  return res.result || [];
 }
 
 export async function getSettings(port: number): Promise<any> {

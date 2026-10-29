@@ -1,7 +1,7 @@
 import { statusState } from './statusStore.svelte';
 import {
   startWallet,
-  getSettings,
+  getAccounts,
   getBalances,
   getTokensForActiveNetworksMode,
 } from '$lib/status/api';
@@ -25,6 +25,15 @@ export const walletState = $state({
   /** Заполнено, когда ни один токен не удалось получить с RPC. */
   rpcError: '',
 });
+
+/**
+ * Кэш метаданных токенов (symbol, decimals) на время сессии.
+ *
+ * `wallet_getTokensForActiveNetworksMode` отдаёт ~4.6 МБ (17 682 токена), а
+ * опрос идёт каждые 3 секунды — запрашивать это каждый раз бессмысленно.
+ * Символы и decimals в рамках сессии не меняются; сбрасывается в resetWallet.
+ */
+let cachedMetadata: Map<string, { symbol: string; decimals: number }> | null = null;
 
 function tokenKey(chainId: number, address: string): string {
   return `${chainId}:${address.toLowerCase()}`;
@@ -100,28 +109,51 @@ export async function loadWallet(force = false) {
       }
     }
 
-    // 2. Адрес кошелька
-    const settings = await getSettings(port);
-    const address = settings.result?.['wallet-root-address'] || '';
-    walletState.address = address;
-    if (!address) throw new Error('Wallet address not found');
+    // 2. Адреса, за которыми следит контроллер балансов.
+    //
+    // wallet-root-address из settings_getSettings — НЕ тот адрес, по которому
+    // бэкенд считает балансы. Контроллер берёт их из keypairs_accounts
+    // (GetWalletAddresses: chat = 0 AND removed = 0, internal/db/multiaccounts/
+    // accounts/database.go), то есть это адреса обычных аккаунтов профиля.
+    // Запрос по wallet-root-address возвращал пустой кэш: ключа такого адреса
+    // в нём просто нет, и это выглядело как «все балансы с ошибкой».
+    const accounts = await getAccounts(port);
+    const addresses: string[] = accounts
+      .filter((a: any) => a && a.address && !a.chat)
+      .map((a: any) => String(a.address));
+
+    walletState.address = addresses[0] || '';
+    if (addresses.length === 0) throw new Error('Wallet address not found');
 
     // 3. Метаданные токенов (symbol, decimals)
-    let metadata = new Map<string, { symbol: string; decimals: number }>();
-    try {
-      metadata = buildMetadataMap(await getTokensForActiveNetworksMode(port));
-    } catch (e) {
-      console.warn('[walletStore] failed to load token metadata:', e);
+    //
+    // Ответ весит ~4.6 МБ (17 682 токена), а опрос идёт каждые 3 с. Символы и
+    // decimals внутри сессии не меняются, поэтому берём их один раз.
+    if (!cachedMetadata) {
+      try {
+        cachedMetadata = buildMetadataMap(await getTokensForActiveNetworksMode(port));
+      } catch (e) {
+        console.warn('[walletStore] failed to load token metadata:', e);
+      }
     }
+    const metadata =
+      cachedMetadata ?? new Map<string, { symbol: string; decimals: number }>();
 
-    // 4. Балансы
-    const balanceData = await getBalances(port, [address], true);
+    // 4. Балансы — по всем адресам аккаунтов кошелька сразу.
+    // Контроллер балансов считает их именно для этого набора, поэтому здесь
+    // должен быть тот же список, иначе ответ придёт пустым.
+    const balanceData = await getBalances(port, addresses, true);
     const byAddr = (balanceData.result ?? {}) as Record<string, any[]>;
 
-    const key = Object.keys(byAddr).find(
-      (k) => k.toLowerCase() === address.toLowerCase()
-    );
-    const tokens = key ? byAddr[key] : [];
+    // Собираем токены по всем адресам: у аккаунта их обычно один, но ответ
+    // содержит запись на каждый запрошенный адрес.
+    const tokens: any[] = [];
+    for (const addr of addresses) {
+      const key = Object.keys(byAddr).find(
+        (k) => k.toLowerCase() === addr.toLowerCase()
+      );
+      if (key && Array.isArray(byAddr[key])) tokens.push(...byAddr[key]);
+    }
 
     let errored = 0;
 
@@ -157,13 +189,29 @@ export async function loadWallet(force = false) {
     walletState.balances = parsed;
     walletState.loaded = true;
 
-    if (tokens.length > 0 && errored === tokens.length) {
+    if (tokens.length === 0) {
+      // Пустой ответ — это НЕ ошибка RPC. Бэкенд вернул ноль токенов, то есть
+      // каталог токенов не наполнен: спрашивать балансы было не о чем, и ни
+      // один запрос к сети не уходил. Говорить здесь «RPC недоступен» значит
+      // отправлять пользователя чинить провайдеров, которые ни при чём.
+      walletState.rpcError =
+        'Каталог токенов пуст: бэкенд не вернул ни одного токена ' +
+        'для активных сетей, поэтому балансы запрашивать не о чем. ' +
+        'Проверьте список токенов и активные сети.';
+      console.warn(
+        '[Wallet] wallet_fetchOrGetCachedWalletBalances вернул 0 токенов — ' +
+        'каталог токенов пуст (это не ошибка RPC)'
+      );
+    } else if (errored === tokens.length) {
       walletState.rpcError =
         'RPC недоступен: ни одна сеть не вернула баланс. ' +
         'Проверьте RPC-провайдеров в настройках сети.';
       console.warn(`[Wallet] Все ${tokens.length} токенов с hasError=true (RPC недоступен)`);
     } else if (errored > 0) {
       console.warn(`[Wallet] ${errored} из ${tokens.length} токенов с hasError=true`);
+    } else {
+      // Всё в порядке — снимаем плашку, если она висела с прошлого опроса.
+      walletState.rpcError = '';
     }
 
     console.log('[walletStore] ✓ loaded', {
@@ -206,6 +254,7 @@ export function stopWalletPolling() {
 
 export function resetWallet() {
   stopWalletPolling();
+  cachedMetadata = null;
   walletState.isLoading = false;
   walletState.error = '';
   walletState.rpcError = '';

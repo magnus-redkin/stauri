@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { walletState, loadWallet, resetWallet } from './walletStore.svelte';
 import { statusState } from './statusStore.svelte';
-import { startWallet, getSettings, getBalances, getTokensForActiveNetworksMode } from '$lib/status/api';
+import { startWallet, getAccounts, getBalances, getTokensForActiveNetworksMode } from '$lib/status/api';
 
 // Мокаем API
 vi.mock('$lib/status/api', () => ({
   startWallet: vi.fn(),
-  getSettings: vi.fn(),
+  getAccounts: vi.fn(),
   getBalances: vi.fn(),
   getTokensForActiveNetworksMode: vi.fn(),
 }));
@@ -22,14 +22,21 @@ const mockMetadata = [
   { chainId: 1, address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', symbol: 'USDC', decimals: 6 },
 ];
 
-const mockSettings = { result: { 'wallet-root-address': '0xABC123' } };
+/**
+ * Аккаунты в том виде, в каком их отдаёт accounts_getAccounts.
+ * chat=true — адрес для чатов, кошелька у него нет и балансы по нему не считаются.
+ */
+const mockAccounts = [
+  { address: '0xCHAT', chat: true, name: '' },
+  { address: '0xABC123', chat: false, name: 'Account 1' },
+];
 
 describe('walletStore', () => {
   beforeEach(() => {
     resetWallet();
     vi.clearAllMocks();
     (startWallet as any).mockResolvedValue({});
-    (getSettings as any).mockResolvedValue(mockSettings);
+    (getAccounts as any).mockResolvedValue(mockAccounts);
     (getTokensForActiveNetworksMode as any).mockResolvedValue(mockMetadata);
   });
 
@@ -102,6 +109,33 @@ describe('walletStore', () => {
     expect(walletState.balances[0].hasError).toBe(true);
   });
 
+  it('показывает сообщение о пустом каталоге токенов', async () => {
+    // Пустой ответ — это НЕ ошибка RPC: каталог не наполнен, спрашивать нечего.
+    (getBalances as any).mockResolvedValue({ result: {} });
+
+    await loadWallet();
+
+    expect(walletState.rpcError).toContain('аталог токенов пуст');
+    expect(walletState.balances).toHaveLength(0);
+  });
+
+  it('запрашивает метаданные токенов один раз, а не на каждом опросе', async () => {
+    (getBalances as any).mockResolvedValue({
+      result: {
+        '0xABC123': [
+          { tokenAddress: '0x0000000000000000000000000000000000000000', tokenChainId: 1, rawBalance: '0', hasError: false },
+        ],
+      },
+    });
+
+    await loadWallet();
+    await loadWallet(true);
+    await loadWallet(true);
+
+    // Ответ весит ~4.6 МБ, поэтому второй и третий опрос не должны его тянуть.
+    expect(getTokensForActiveNetworksMode).toHaveBeenCalledTimes(1);
+  });
+
   it('не выставляет rpcError, когда часть токенов загрузилась', async () => {
     (getBalances as any).mockResolvedValue({
       result: {
@@ -118,7 +152,8 @@ describe('walletStore', () => {
   });
 
   it('должен выбрасывать ошибку, если адрес не найден', async () => {
-    (getSettings as any).mockResolvedValue({ result: {} });
+    // Только чат-адрес: у него нет кошелька, поэтому кошелёк-адресов не остаётся.
+    (getAccounts as any).mockResolvedValue([{ address: '0xCHAT', chat: true }]);
 
     await loadWallet();
 

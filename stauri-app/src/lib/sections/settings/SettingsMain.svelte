@@ -62,6 +62,12 @@
         >
           中文
         </button>
+        <button
+          class="px-4 py-2 rounded-md border border-border {i18n.locale === 'es' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-secondary'}"
+          onclick={() => changeLanguage('es')}
+          >
+          Español
+        </button>
       </div>
     </div>
 

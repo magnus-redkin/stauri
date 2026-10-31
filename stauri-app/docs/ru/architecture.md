@@ -168,7 +168,22 @@ text
 - **Три состояния** различаются в UI: пустой каталог / RPC недоступен /
   всё нормально.
 
-### 4.4. dApp-окна
+### 4.4. Market
+
+`market.rs` (Rust) + `MarketMain.svelte`. Никакой связи с `status-go`:
+- `fetch_market_data` делает `reqwest` к CoinGecko (`/coins/markets`),
+- передаёт `x-cg-demo-api-key` из `.env`,
+- кэширует на 60 секунд,
+- возвращает `Vec<MarketCoin>`.
+
+Тип `MarketCoin` — плоский: `id`, `symbol`, `name`, `image`,
+`current_price`, `market_cap`, `total_volume`,
+`price_change_percentage_24h: Option<f64>`. Числовые поля — `f64`
+(CoinGecko отдаёт float). `#[serde(default)]` защищает от отсутствия
+`price_change_percentage_24h`.
+
+
+### 4.5. dApp-окна
 
 `open_dapp_window` создаёт отдельное окно Tauri с `WebviewUrl::External`.
 Это изоляция: dApp не имеет доступа к `window.__TAURI__` главного окна,

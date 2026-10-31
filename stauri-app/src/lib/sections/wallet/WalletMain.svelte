@@ -1,16 +1,37 @@
 <script lang="ts">
   import { i18n } from '$lib/i18n';
-  import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
   import { walletState, loadWallet } from '$lib/stores/walletStore.svelte';
-  import { formatBalance } from '$lib/utils/format';
+  import WalletAssetsTab from './tabs/WalletAssetsTab.svelte';
+  import WalletSendTab from './tabs/WalletSendTab.svelte';
+  import WalletReceiveTab from './tabs/WalletReceiveTab.svelte';
+  import WalletBuyTab from './tabs/WalletBuyTab.svelte';
+  import WalletSwapTab from './tabs/WalletSwapTab.svelte';
+
+  type WalletTab = 'assets' | 'send' | 'receive' | 'buy' | 'swap';
+
+  let activeTab = $state<WalletTab>('assets');
+
+  const tabs: { id: WalletTab; label: string; disabled?: boolean }[] = [
+    { id: 'assets', label: i18n.t('Assets') },
+    { id: 'send', label: i18n.t('Send') },
+    { id: 'receive', label: i18n.t('Receive') },
+    { id: 'buy', label: i18n.t('Buy'), disabled: true },
+    { id: 'swap', label: i18n.t('Swap'), disabled: true },
+  ];
+
+  function selectTab(tab: (typeof tabs)[number]) {
+    if (tab.disabled) return;
+    activeTab = tab.id;
+  }
 
   async function refresh() {
     await loadWallet(true);
   }
 </script>
 
-<div class="h-full flex flex-col p-6 bg-card overflow-hidden">
-  <div class="flex justify-between items-start mb-6">
+<div class="h-full flex flex-col bg-card overflow-hidden">
+  <!-- Шапка: заголовок + адрес + кнопка обновления -->
+  <div class="p-6 pb-0 flex justify-between items-start">
     <div>
       <h2 class="text-2xl font-bold text-primary">{i18n.t('All accounts')}</h2>
       {#if walletState.address}
@@ -19,63 +40,46 @@
         </div>
       {/if}
     </div>
-    <button onclick={refresh} class="p-2 rounded-md border border-border hover:bg-secondary">
+    <button
+      onclick={refresh}
+      class="p-2 rounded-md border border-border hover:bg-secondary transition-colors"
+      title={i18n.t('Refresh')}
+    >
       🔄
     </button>
   </div>
 
-  {#if walletState.isLoading && walletState.balances.length === 0}
-    <p class="text-muted-foreground">{i18n.t('Loading balances...')}</p>
-  {:else if walletState.error}
-    <p class="text-destructive text-sm">{walletState.error}</p>
-  {:else}
-    {#if walletState.rpcError}
-      <div class="mb-4 p-3 rounded-lg border border-destructive/40 bg-destructive/10 text-destructive text-sm">
-        ⚠️ {walletState.rpcError}
-      </div>
+  <!-- Кнопки-вкладки -->
+  <div class="px-6 mt-4 border-b border-border flex gap-1 overflow-x-auto">
+    {#each tabs as tab (tab.id)}
+      <button
+        onclick={() => selectTab(tab)}
+        disabled={tab.disabled}
+        class="px-4 py-2 text-sm font-medium rounded-t-md transition-colors whitespace-nowrap
+          {activeTab === tab.id
+            ? 'text-primary border-b-2 border-primary -mb-px bg-secondary/30'
+            : tab.disabled
+              ? 'text-muted-foreground/50 cursor-not-allowed'
+              : 'text-muted-foreground hover:text-foreground hover:bg-secondary/50'}"
+        title={tab.disabled ? i18n.t('Coming soon') : ''}
+      >
+        {tab.label}
+      </button>
+    {/each}
+  </div>
+
+  <!-- Контент вкладки -->
+  <div class="flex-1 overflow-hidden">
+    {#if activeTab === 'assets'}
+      <WalletAssetsTab />
+    {:else if activeTab === 'send'}
+      <WalletSendTab />
+    {:else if activeTab === 'receive'}
+      <WalletReceiveTab />
+    {:else if activeTab === 'buy'}
+      <WalletBuyTab />
+    {:else if activeTab === 'swap'}
+      <WalletSwapTab />
     {/if}
-
-    <ScrollArea class="flex-1">
-      {#if walletState.rpcError}
-        <!-- Все токены с hasError: список нулей ничего не сообщает, показываем только ошибку выше. -->
-      {:else if walletState.balances.length === 0}
-        <p class="text-muted-foreground text-sm italic">{i18n.t('No balances found.')}</p>
-      {:else}
-        <div class="space-y-2">
-          {#each walletState.balances as token (token.chainId + ':' + token.tokenAddress)}
-            <div class="flex justify-between items-center p-3 bg-secondary/50 rounded-lg">
-              <div class="flex items-center gap-3">
-                <div class="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold">
-                  {token.symbol.substring(0, 1)}
-                </div>
-                <div class="flex flex-col">
-                  <span class="font-medium">{token.symbol}</span>
-                  {#if token.hasError}
-                    <span class="text-[10px] text-destructive">RPC error</span>
-                  {/if}
-                </div>
-              </div>
-              <span class="font-mono text-sm {token.hasError ? 'text-muted-foreground line-through' : ''}">
-                {formatBalance(token.balance, token.decimals)}
-              </span>
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </ScrollArea>
-
-<!-- Панель действий -->
-<div class="p-4 border-t border-border flex gap-2">
-  <button onclick={() => alert('Send not implemented')} class="flex-1 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium">
-    {i18n.t('Send')}
-  </button>
-  <button onclick={() => alert('Receive not implemented')} class="flex-1 py-2 border border-border rounded-md text-sm font-medium">
-    {i18n.t('Receive')}
-  </button>
-  <button onclick={() => alert('Swap not implemented')} class="flex-1 py-2 border border-border rounded-md text-sm font-medium">
-    {i18n.t('Swap')}
-  </button>
-</div>
-
-  {/if}
+  </div>
 </div>

@@ -7,6 +7,7 @@ use serde::{Serialize, Deserialize};
 use std::path::PathBuf;
 
 mod rpc_proxy;
+mod market;
 
 #[derive(Serialize)]
 struct StartBackendResponse {
@@ -278,11 +279,19 @@ async fn start_backend(app: tauri::AppHandle, network: Option<String>) -> Result
         format!("127.0.0.1:{}", port),
     ];
 
-    // 7. Запускаем sidecar
-    let sidecar_command = app.shell()
-        .sidecar("status-backend")
-        .map_err(|e| format!("Failed to create sidecar command: {}", e))?
-        .args(&args);
+  // 7. Запускаем sidecar
+
+  let lib_dir = app.path()
+    .resource_dir()
+    .map(|p| p.join("binaries"))
+    .unwrap_or_else(|_| std::path::PathBuf::from("./binaries"));
+
+  let sidecar_command = app.shell()
+    .sidecar("status-backend")
+    .map_err(|e| format!("Failed to create sidecar command: {}", e))?
+    .args(&args)
+    .env("LD_LIBRARY_PATH", lib_dir);
+
 
     let (mut rx, child) = sidecar_command.spawn()
         .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
@@ -434,6 +443,7 @@ fn stop_rpc_proxy(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+  let _ = dotenv::from_path("../.env");
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
@@ -452,7 +462,8 @@ pub fn run() {
             open_dapp_window,
             start_rpc_proxy,
             set_rpc_upstreams,
-            stop_rpc_proxy
+          stop_rpc_proxy,
+          market::fetch_market_data
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

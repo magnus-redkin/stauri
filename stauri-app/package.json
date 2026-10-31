@@ -14,6 +14,9 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "tests": "pnpm run test:frontend && pnpm run test:rust",
+    "test:frontend": "vitest run",
+    "test:rust": "cd src-tauri && cargo test",
     "lint": "eslint ."
   },
   "license": "MPL-2.0",
@@ -23,6 +26,7 @@
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-shell": "^2.5.0",
     "@tauri-apps/plugin-websocket": "^2.5.0",
+    "cryptocurrency-icons": "^0.18.1",
     "lucide-svelte": "^1.0.1",
     "paneforge": "^1.0.2",
     "sveltekit-i18n": "^3.4.1"

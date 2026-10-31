@@ -23,6 +23,9 @@ importers:
       '@tauri-apps/plugin-websocket':
         specifier: ^2.5.0
         version: 2.5.0
+      cryptocurrency-icons:
+        specifier: ^0.18.1
+        version: 0.18.1
       lucide-svelte:
         specifier: ^1.0.1
         version: 1.0.1(svelte@5.57.2(@typescript-eslint/types@8.72.0))
@@ -889,6 +892,9 @@ packages:
   cross-spawn@7.0.6:
     resolution: {integrity: sha512-uV2QOWP2nWzsy2aMp8aRibhi9dlzF5Hgh5SHaB9OiTGEyDTiJJyx0uy51QXdyWbtAHNua4XJzUKca3OzKUd3vA==}
     engines: {node: '>= 8'}
+
+  cryptocurrency-icons@0.18.1:
+    resolution: {integrity: sha512-dvR5O8JOmav3559Yb0Igpkia+3vpt/aeNvMu5ZIVUG2Bzpq9wNcOJRIQas49XJrPjtZ98GAEn3aDQO+w7uhS2w==}
 
   css-tree@3.2.1:
     resolution: {integrity: sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==}
@@ -2545,6 +2551,8 @@ snapshots:
       path-key: 3.1.1
       shebang-command: 2.0.0
       which: 2.0.2
+
+  cryptocurrency-icons@0.18.1: {}
 
   css-tree@3.2.1:
     dependencies:

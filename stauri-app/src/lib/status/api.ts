@@ -358,3 +358,18 @@ export async function sendContactRequest(port: number, publicKey: string, messag
     params: [{ id: publicKey, message: message }]
   });
 }
+
+export interface MarketCoin {
+  id: string;
+  symbol: string;
+  name: string;
+  image: string;
+  current_price: number;
+  market_cap: number;
+  total_volume: number;
+  price_change_percentage_24h: number | null;
+}
+
+export async function fetchMarketData(): Promise<MarketCoin[]> {
+  return await invoke<MarketCoin[]>('fetch_market_data');
+}

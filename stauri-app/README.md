@@ -1,0 +1,1 @@
+# Stauri (Status Tauri Client)

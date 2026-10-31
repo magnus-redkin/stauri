@@ -124,7 +124,10 @@ export async function configureWalletRpc(
     // До старта ноды сервис сетей ещё не зарегистрирован — это не ошибка,
     // форвардер уже работает со статической таблицей.
     console.log('[configureWalletRpc] networks API not ready yet:', e);
-    return;
+    // Провайдеров мы не видели и ничего не писали: судить о том, правильно ли
+    // собран RPC-клиент, по этому вызову нельзя. Перезапуск ноды здесь
+    // бессмысленен — вызывающий код в этом случае просто пропускает его.
+    return { wroteProviders: false };
   }
 
   const upstreams: Record<number, string> = { ...PUBLIC_RPC };

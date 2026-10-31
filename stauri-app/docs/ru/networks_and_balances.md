@@ -46,9 +46,11 @@ reconnectWs                       — WS /signals
    ↓
 configureWalletRpc                — форвардер + провайдеры (см. §3)
    ↓
-loginAccount → node.login
+loginAccount → node.login         — нода стартует, кошелёк сразу делает full fetch
    ↓
 configureWalletRpc                — повторно: сети уже зарегистрированы
+   ↓
+   ├─ записали что-то? → logout → node.stopped → loginAccount → configureWalletRpc
    ↓
 wakuext_startMessenger            — только теперь, messenger создаёт RPC-клиенты
    ↓
@@ -66,6 +68,41 @@ wallet_startWallet                — один раз за сессию
 ещё не зарегистрирован в RPC-сервере (`initServices` идёт после старта ноды),
 поэтому первый вызов только поднимает форвардер, а провайдеров прописывает
 второй.
+
+### 2.1. Перезапуск ноды (только чистый профиль)
+
+Второго вызова `configureWalletRpc` недостаточно, если профиль новый. Нода
+стартует внутри `loginAccount`, её кошелёк сразу запускает
+`MultistandardBalanceController` → `TriggerFullFetch` → первое обращение к
+`EthClient(chainID)`. Клиент кэшируется и живёт до `StatusNode.Stop()`, а
+встроенные провайдеры к этому моменту ещё единственные в БД. Провайдеры,
+записанные вторым вызовом, попадут только в следующий клиент.
+
+Поэтому `configureWalletRpc` возвращает `{ wroteProviders }` — признак того,
+что запись действительно произошла. Если да, вход повторяется один раз:
+
+```
+logout → дождаться node.stopped → loginAccount → configureWalletRpc → startMessenger
+```
+
+Два условия корректности:
+
+- **Ждать `node.stopped` обязательно.** Вход до остановки вернёт тот же живой
+  узел с прежним кэшем. Ожидание регистрируется *до* `logout`, иначе сигнал
+  можно проспать: нода встаёт асинхронно, и `node.stopped` может прийти
+  раньше, чем вернётся вызов. См. `waitForNodeStopped` в
+  `statusStore.svelte.ts`.
+- **`isLoggedIn` сбрасывается по `node.stopped`.** Иначе `waitForLogin`
+  разрешился бы мгновенно на старом флаге, и второй вход не дождался бы
+  ничего.
+
+На повторных запусках провайдер уже в БД, `wroteProviders === false`, и
+перезапуска нет — лишних секунд при каждом старте не появляется.
+`InitEmbeddedNetworks` при старте ноды сохраняет user-провайдеров, поэтому
+новый клиент собирается уже с `stauri-rpc`.
+
+`waitForNodeStopped` не бросает по таймауту (15 с): если сигнал потерялся,
+вход продолжается — вечное ожидание заблокировало бы приложение.
 
 Форвардер поднимается **первым** и независимо от status-go. Это команда
 Tauri, она доступна всегда; провайдер с прошлого запуска уже лежит в БД и
@@ -325,11 +362,14 @@ call '{"jsonrpc":"2.0","id":1,"method":"wallet_getBlockchainHealthStatus","param
    готовности status-go.
 3. Провайдеры прописываются **до** `wakuext_startMessenger` — иначе
    RPC-клиент навсегда соберётся из встроенных провайдеров.
-4. Фильтр сетей — `enabled && isActive`.
-5. Адреса для балансов — аккаунты с `chat = false`, не
+4. Если провайдеров пришлось записывать (`wroteProviders`), нода
+   перезапускается один раз: `logout` → `node.stopped` → `loginAccount`.
+   На повторных запусках этого не происходит.
+5. Фильтр сетей — `enabled && isActive`.
+6. Адреса для балансов — аккаунты с `chat = false`, не
    `wallet-root-address`.
-6. `symbol` и `decimals` берутся из `wallet_getTokensForActiveNetworksMode`
+7. `symbol` и `decimals` берутся из `wallet_getTokensForActiveNetworksMode`
    и сопоставляются по `(chainId, tokenAddress)`.
-7. Балансы перечитываются по таймеру; `forceRefresh` не работает.
-8. Нули показываются, `hasError` не скрывается, три состояния
+8. Балансы перечитываются по таймеру; `forceRefresh` не работает.
+9. Нули показываются, `hasError` не скрывается, три состояния
    (пустой каталог / RPC недоступен / всё нормально) различаются в UI.

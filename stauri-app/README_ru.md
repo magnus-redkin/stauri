@@ -63,6 +63,37 @@ Stauri требует предварительно собранный бинар
 
 Подробные инструкции по подготовке бинарных файлов Nix и компиляции проекта см. в файле [BUILDING.md](./BUILDING.md).
 
+## 🗺️ Roadmap (TODO)
+### Сделано
+
+- Запуск и остановка status-backend (sidecar, PID, зомби).
+- WebSocket-сигналы (node.login, node.stopped, messages.new).
+- Создание аккаунта и вход.
+- Запуск мессенджера.
+- Запуск кошелька.
+- Адреса из accounts_getAccounts (chat = false).
+- Балансы с метаданными (wallet_getTokensForActiveNetworksMode).
+- RPC-форвардер и user-провайдер stauri-rpc.
+- Перезапуск ноды при изменении провайдеров.
+- dApp-окна (изолированные WebView).
+- Динамическая конфигурация сети.
+
+### В работе
+
+- Send — перевод ETH/ERC-20. Требует Router (wallet_getSuggestedRoutesAsync), подписи и отправки (wallet_SendRouterTransactionsWithSignatures), обработки сигналов wallet.router.*.
+- Receive — адрес и QR-код. Просто, но нужно для полноты кошелька.
+
+### Запланировано
+
+- Swap + Bridge — обмен токенов. Использует тот же Router, что и Send, но с маршрутом. Провайдер — Relay/ParaSwap (зависит от версии status-go).
+- Buy (OnRamp) — покупка крипты. Стандартный вариант — wallet_getCryptoOnRamps (MoonPay). Кастомные провайдеры (P2P, обменники) — через интерфейс BuyProvider (dApp-расширение).
+- Market — рыночные данные (цены, изменения). Источник — wallet_getMarketData или аналог.
+- Покупка ETH имени (ENS) — регистрация ENS-имени. Требует Router и подписи, как Send.
+- Контакты и чаты — полноценный обмен сообщениями.
+- Инъекция window.ethereum в dApp-окна с гранулированными разрешениями.
+- Manage Tokens — скрытие токенов, фильтр «пыли», управление списками (CoinGecko, Status Token List).
+- Sell (OffRamp) — продажа крипты за фиат. В status-go пока нет API; возможен через P2P-ссылки.
+
 ## 📦 Технологический стек
 
 - **Фронтенд:** Svelte 5, SvelteKit, Tailwind CSS, shadcn-svelte
@@ -82,34 +113,3 @@ pnpm test
 
 # E2E (Playwright)
 pnpm test:e2e
-
-🗺️ Roadmap (TODO)
-Сделано
-
-- Запуск и остановка status-backend (sidecar, PID, зомби).
-- WebSocket-сигналы (node.login, node.stopped, messages.new).
-- Создание аккаунта и вход.
-- Запуск мессенджера.
-- Запуск кошелька.
-- Адреса из accounts_getAccounts (chat = false).
-- Балансы с метаданными (wallet_getTokensForActiveNetworksMode).
-- RPC-форвардер и user-провайдер stauri-rpc.
-- Перезапуск ноды при изменении провайдеров.
-- dApp-окна (изолированные WebView).
-- Динамическая конфигурация сети.
-
-В работе
-
-- Send — перевод ETH/ERC-20. Требует Router (wallet_getSuggestedRoutesAsync), подписи и отправки (wallet_SendRouterTransactionsWithSignatures), обработки сигналов wallet.router.*.
-- Receive — адрес и QR-код. Просто, но нужно для полноты кошелька.
-
-Запланировано
-
-- Swap + Bridge — обмен токенов. Использует тот же Router, что и Send, но с маршрутом. Провайдер — Relay/ParaSwap (зависит от версии status-go).
-- Buy (OnRamp) — покупка крипты. Стандартный вариант — wallet_getCryptoOnRamps (MoonPay). Кастомные провайдеры (P2P, обменники) — через интерфейс BuyProvider (dApp-расширение).
-- Market — рыночные данные (цены, изменения). Источник — wallet_getMarketData или аналог.
-- Покупка ETH имени (ENS) — регистрация ENS-имени. Требует Router и подписи, как Send.
-- Контакты и чаты — полноценный обмен сообщениями.
-- Инъекция window.ethereum в dApp-окна с гранулированными разрешениями.
-- Manage Tokens — скрытие токенов, фильтр «пыли», управление списками (CoinGecko, Status Token List).
-- Sell (OffRamp) — продажа крипты за фиат. В status-go пока нет API; возможен через P2P-ссылки.

@@ -1,3 +1,3 @@
 # Stauri
 
-- [`stauri-app/README.md`](Stauri - Status Tauri Client)
+- [Stauri — Status Tauri Client](stauri-app/README.md)

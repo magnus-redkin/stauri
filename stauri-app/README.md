@@ -1,5 +1,7 @@
 # Stauri (Status client on Tauri)
 
+[`README_ru.md`](README_ru.md)
+
 **Stauri** is a lightweight desktop client for the Status ecosystem, being developed as an actively growing alternative to the official `status-desktop`.
 
 Built on **Tauri (Rust)** and **Svelte 5**, Stauri uses a sidecar architecture to talk to the Status backend (`status-backend`) over local WebSocket and HTTP. This approach preserves the full power of `status-go` while providing a modern, fast, and flexible user interface.

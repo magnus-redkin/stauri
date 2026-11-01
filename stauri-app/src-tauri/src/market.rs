@@ -35,11 +35,13 @@ pub async fn fetch_market_data() -> Result<Vec<MarketCoin>, String> {
         }
     }
 
-    // 2. Ключ из .env
+    // 2. Ключ CoinGecko — необязателен.
+    //
+    //    Публичный эндпоинт отдаёт данные без ключа; x-cg-demo-api-key только
+    //    повышает лимит запросов. При кэше в 60 с и одном запросе на 50 монет
+    //    анонимного лимита хватает, поэтому отсутствие ключа — не ошибка.
+    //    Ключ читается из ~/.config/com.magnus.stauri-app/.env (см. load_env).
     let api_key = std::env::var("COINGECKO_KEY").unwrap_or_default();
-    if api_key.is_empty() {
-        return Err("COINGECKO_KEY не задан в .env".to_string());
-    }
 
     let url = "https://api.coingecko.com/api/v3/coins/markets\
         ?vs_currency=usd\
@@ -55,10 +57,12 @@ pub async fn fetch_market_data() -> Result<Vec<MarketCoin>, String> {
         .build()
         .map_err(|e| format!("Client build error: {e}"))?;
 
-    let resp = client
-        .get(url)
-        .header("Accept", "application/json")
-        .header("x-cg-demo-api-key", api_key)
+    let mut request = client.get(url).header("Accept", "application/json");
+    if !api_key.is_empty() {
+        request = request.header("x-cg-demo-api-key", &api_key);
+    }
+
+    let resp = request
         .send()
         .await
         .map_err(|e| format!("Request failed: {e}"))?;

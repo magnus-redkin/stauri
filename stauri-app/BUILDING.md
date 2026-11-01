@@ -1,87 +1,85 @@
-# Building Stauri
+# Сборка Stauri
 
-This guide covers how to build `status-backend` in a Nix environment and prepare it as a sidecar for the Tauri application.
+Документ описывает воспроизводимую сборку `status-backend` и Stauri.
 
-## Prerequisites
+## Пререквизиты
 
-- **Nix** (with flakes enabled)
-- **Rust** >= 1.85 (needed for `edition = "2024"`)
-- **Node.js** (v20+) & **pnpm**
-- **patchelf** (for Linux binary patching)
-- **System packages for Tauri on Linux**: `libwebkit2gtk-4.1-dev`, `build-essential`, `curl`, `wget`, `file`, `libxdo-dev`, `libssl-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`.
-- **glibc >= 2.38** on the target machine (due to Nix build requirements).
+- **Nix** (flakes enabled). Рекомендуется Determinate Nix.
+- **Rust** ≥ 1.85 (edition 2024).
+- **Node.js** ≥ 20 + **pnpm**.
+- **Системные пакеты Tauri на Linux**:
+  `libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf`.
 
-## Step 1: Build `status-backend` in Nix
+## 1. Сборка `status-backend` в Nix
 
-Clone the `status-go` repository and checkout the tested version:
+Клонируй `status-go` и переключись на протестированный коммит:
 
 ```bash
-git clone https://github.com/status-im/status-go.git
-cd status-go
-# IMPORTANT: Checkout the tested commit/tag for Stauri
-git checkout 766535cf3 # Replace with actual commit if needed
+git clone https://github.com/status-im/status-go.git ~/ETH/github.status-go
+cd ~/ETH/github.status-go
+git checkout 766535cf3   # протестированный коммит
+```
+Войди в Nix shell:
+```bash
 nix develop --extra-experimental-features 'nix-command flakes'
+```
+ВАЖНО: перед сборкой убедись, что в окружении нет «протечек» из твоих локальных экспериментов (vosk, whisper, portaudio, onnxruntime). Они подмешивают системные библиотеки (например, libmp3lame) и ломают Nix-сборку.
+```bash
+unset CGO_LDFLAGS CGO_CFLAGS LD_LIBRARY_PATH LIBRARY_PATH
+```
+Собери status-backend:
+```bash
+make status-backend
+```
+Готовый бинарник: build/bin/status-backend.
 
-# Inside the Nix shell:
-make statusgo
+## 2. Найти libsds.so из того же Nix-окружения
 
-After the build completes, you will find status-backend in status-go/build/bin/. You will also need libsds.so, which is located in the Nix store (usually under .../nim-sds-.../lib/libsds.so).
-Step 2: Prepare Binaries for Tauri
+libsds.so лежит в Nix store. Возьми ту же, что использовалась при линковке status-backend. В логе сборки была строка -L/nix/store/<hash>-nim-sds-.../lib -lsds. Найди её:
+```bash
+find /nix/store -name "libsds.so" 2>/dev/null
+```
+Если в store несколько версий (например, три), выбери ту, что соответствует nim-sds, с которой собран status-backend. Точный путь виден в логе make status-backend (строка -L/nix/store/.../lib -lsds).
 
-Use the provided script to copy and patch the binaries:
-bash
+## 3. Скопировать артефакты в Stauri
+```bash
+TRIPLE=x86_64-unknown-linux-gnu
 
-# From the repository root (staturi/)
-chmod +x scripts/prepare-sidecar.sh
-./scripts/prepare-sidecar.sh status-go/build/bin/status-backend /nix/store/.../lib/libsds.so
+cp ~/ETH/github.status-go/build/bin/status-backend \
+   ~/ETH/stauri/stauri-app/src-tauri/binaries/status-backend-$TRIPLE
 
-This script will:
+cp /nix/store/<hash>-nim-sds-.../lib/libsds.so \
+   ~/ETH/stauri/stauri-app/src-tauri/binaries/libsds.so
+```
+## 4. Проверка
+```bash
+cd ~/ETH/stauri/stauri-app/src-tauri
+LD_LIBRARY_PATH=./binaries ./binaries/status-backend-$TRIPLE --help
+```
+Должен вывести Usage of ...status-backend (а не segmentation fault).
 
-    Detect your target triple.
-
-    Copy binaries to tauri-app/src-tauri/binaries/.
-
-    Apply patchelf (on Linux) to replace the interpreter and RPATH with $ORIGIN.
-
-    Check for unresolved or Nix dependencies.
-
-Step 3: Configure Tauri
-
-Ensure tauri-app/src-tauri/tauri.conf.json and tauri-app/src-tauri/capabilities/default.json are configured (see the files in the repository).
-Step 4: Run Stauri
-bash
-
-cd tauri-app
+## 5. Запуск Stauri
+```bash
+cd ~/ETH/stauri/stauri-app
 pnpm install
 pnpm tauri dev
+```
+## 6. Сборка AppImage
+```bash
+cd ~/ETH/stauri/stauri-app
+./scripts/release.sh 0.2.0
+```
+release.sh собирает AppImage нативно (Ubuntu 24.04+), копирует libsds.so рядом с status-backend в AppDir/usr/bin/, использует RPATH=$ORIGIN и запускает linuxdeploy с обходом ldd segfault.
 
-Note: The release build (pnpm tauri build) has not been fully tested yet. Bundling libsds.so into the final package requires further investigation.
-text
+## Почему Nix
 
+status-backend и libsds.so должны быть собраны в одном окружении (одна glibc, один ABI). Nix гарантирует это. Если собрать status-backend системным Go, а libsds.so взять из Nix store (или наоборот), получишь SIGSEGV при запуске — status-backend загрузится, но упадёт при инициализации libsds.so.
+Известные проблемы
 
-### 🧹 Шаг 3: Переименовываем шаблонные поля
+- CGO_LDFLAGS/CGO_CFLAGS из локальных экспериментов (vosk, whisper, portaudio) подмешивают системные библиотеки. Всегда unset их перед make status-backend в Nix shell.
+- patchelf assertion splitIndex != -1 на некоторых бинарниках. Если patchelf --set-rpath падает, используйте --remove-rpath + --set-rpath, или не патчите RPATH (положите libsds.so рядом с бинарником, RPATH=$ORIGIN сработает).
+- ldd segfault на status-backend — linuxdeploy падает при анализе. Обход: обёртка /tmp/bin/ldd, которая для status-backend отвечает statically linked.
 
-**В `tauri-app/src-tauri/Cargo.toml`**:
-```toml
-[package]
-name = "stauri"
-version = "0.1.0"
-description = "A lightweight desktop client for the Status ecosystem"
-authors = ["Your Name"]
-edition = "2024"
-license = "MIT" # или Apache-2.0
+## Проверка сборки (CI)
 
-[lib]
-name = "stauri_lib" # <-- Важно: это имя используется в main.rs
-# ...
-
-Не забудьте обновить src-tauri/src/main.rs: там строка tauri_app_lib::run() должна стать stauri_lib::run().
-
-В tauri-app/src-tauri/tauri.conf.json:
-json
-
-{
-  "productName": "Stauri",
-  "identifier": "com.magnus.stauri",
-  // ...
-}
+Для CI повтори шаги 1–4 в Nix shell. release.sh можно расширить, добавив опциональный шаг сборки status-backend через nix develop --command make status-backend, если бинарник нужно пересобрать.

@@ -7,12 +7,26 @@ const INFURA_KEY = import.meta.env.VITE_INFURA_KEY as string | undefined;
 
 console.log('[api] ALCHEMY_KEY loaded:', !!ALCHEMY_KEY, 'INFURA_KEY loaded:', !!INFURA_KEY);
 
-/** Собирает секреты в строго валидную для status-go вложенную структуру */
+/**
+ * Секреты для LoginAccount / CreateAccountAndLogin.
+ *
+ * Ключи проверены по исходникам status-go:
+ *
+ * alchemyApiKey сюда НЕ передаётся. В status-go он идёт единственным
+ * потребителем — collectibles-клиентом (pkg/services/wallet/service.go,
+ * alchemy.NewClient), а NFT/коллекции в Stauri не реализованы. Сам ключ
+ * при этом остаётся в бандле: его использует connectionStore для сборки
+ * RPC-URL, поэтому убирать его из .env нельзя.
+ *
+ * infuraToken передаётся и нужен: из него status-go берёт VerifyENSURL
+ * (pkg/backend/defaults.go, getMainnetRPCURL) для проверки ENS-имён и
+ * подставляет его как AuthToken в direct-провайдер mainnet.infura.io.
+ * Без токена getMainnetRPCURL возвращает пустую строку, и ENS-верификация
+ * в internal/protocol/ens/verifier.go молча пропускается.
+ */
 function walletSecrets(): Record<string, string> {
   const secrets: Record<string, string> = {};
 
-  // 🔥 ГЛАВНЫЙ ФИКС: Точное совпадение с Go-полями request.AlchemyAPIKey и request.InfuraAPIKey
-  if (ALCHEMY_KEY) secrets.alchemyApiKey = ALCHEMY_KEY;
   if (INFURA_KEY) secrets.infuraToken = INFURA_KEY;
 
   return secrets;
@@ -40,6 +54,32 @@ export async function loginAccount(
 }
 
 /**
+ * Логирование status-go отключено по умолчанию.
+ *
+ * status.log писался на уровне DEBUG при каждом запуске и складывал в
+ * ~/.local/share/... полные URL RPC-провайдеров вместе с API-ключами
+ * (Alchemy передаёт ключ в пути запроса). Это утечка секрета на диск
+ * пользователя: файл переживает перезапуски и его легко приложить
+ * к баг-репорту.
+ *
+ * Разработчику: задайте VITE_STATUS_LOG=debug (и при необходимости
+ * VITE_STATUS_LOG_FILE=/abs/path) в .env — тогда лог включится.
+ */
+const STATUS_LOG_LEVEL = import.meta.env.VITE_STATUS_LOG as string | undefined;
+const STATUS_LOG_FILE = import.meta.env.VITE_STATUS_LOG_FILE as string | undefined;
+
+function loggingConfig(dataDir: string): Record<string, unknown> {
+  if (!STATUS_LOG_LEVEL) {
+    return { logEnabled: false };
+  }
+  return {
+    logEnabled: true,
+    logLevel: STATUS_LOG_LEVEL,
+    logFilePath: STATUS_LOG_FILE ?? `${dataDir}/status.log`,
+  };
+}
+
+/**
  * Создает аккаунт и логинит в него.
  * thirdpartyServicesEnabled: true — включает RPC-провайдеров в BuildDefaultNetworks.
  * statusProxyStageName: "prod" — валидный stage name.
@@ -57,9 +97,7 @@ export async function createAccountAndLogin(
     customizationColor: "primary",
     thirdpartyServicesEnabled: true,
     statusProxyStageName: 'prod',
-    logEnabled: true,
-    logLevel: 'DEBUG',
-    logFilePath: `${dataDir}/status.log`,
+    ...loggingConfig(dataDir),
     ...walletSecrets(),
   };
   console.log('[CreateAccount] payload keys:', Object.keys(payload));

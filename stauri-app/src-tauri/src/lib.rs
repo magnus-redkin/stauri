@@ -279,66 +279,72 @@ async fn start_backend(app: tauri::AppHandle, network: Option<String>) -> Result
         format!("127.0.0.1:{}", port),
     ];
 
-  // 7. Запускаем sidecar
-
-  let lib_dir = app.path()
-    .resource_dir()
-    .map(|p| p.join("binaries"))
-    .unwrap_or_else(|_| std::path::PathBuf::from("./binaries"));
-
-  let sidecar_command = app.shell()
+  // 7. Запускаем sidecar.
+  //
+  // В dev libsds.so лежит в target/debug/binaries/, поэтому нужен
+  // LD_LIBRARY_PATH=./binaries (относительно cwd = target/debug/).
+  // В release/AppImage libsds.so лежит рядом со status-backend (usr/bin/),
+  // и работает RPATH=$ORIGIN, который Tauri ставит при сборке.
+  // LD_LIBRARY_PATH в release НЕ выставляем, иначе он перекрывает RPATH
+  // и указывает на usr/lib/stauri-app/, где libsds.so нет.
+  let sidecar = app.shell()
     .sidecar("status-backend")
     .map_err(|e| format!("Failed to create sidecar command: {}", e))?
-    .args(&args)
-    .env("LD_LIBRARY_PATH", lib_dir);
+    .args(&args);
 
+  let sidecar_command = if cfg!(debug_assertions) {
+    sidecar.env("LD_LIBRARY_PATH", "./binaries")
+  } else {
+    sidecar
+  };
 
-    let (mut rx, child) = sidecar_command.spawn()
-        .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
+  let (mut rx, child) = sidecar_command.spawn()
+    .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
 
-    // 8. Записываем PID
-    let pid = child.pid();
-    let pid_file = data_dir.join("status-backend.pid");
-    if let Err(e) = std::fs::write(&pid_file, pid.to_string()) {
-        eprintln!("Warning: failed to write PID file: {}", e);
-    }
+  // 8. Записываем PID
+  let pid = child.pid();
+  let pid_file = data_dir.join("status-backend.pid");
+  if let Err(e) = std::fs::write(&pid_file, pid.to_string()) {
+    eprintln!("Warning: failed to write PID file: {}", e);
+  }
 
-    // 9. Сохраняем процесс, порт и dataDir
-    {
-        let mut child_lock = state.child.lock().map_err(|_| "Mutex poisoned")?;
-        *child_lock = Some(child);
-        let mut port_lock = state.port.lock().map_err(|_| "Mutex poisoned")?;
-        *port_lock = Some(port);
-        let mut data_dir_lock = state.data_dir.lock().map_err(|_| "Mutex poisoned")?;
-        *data_dir_lock = Some(data_dir.clone());
-    }
+  // 9. Сохраняем процесс, порт и dataDir
+  {
+    let mut child_lock = state.child.lock().map_err(|_| "Mutex poisoned")?;
+    *child_lock = Some(child);
+    let mut port_lock = state.port.lock().map_err(|_| "Mutex poisoned")?;
+    *port_lock = Some(port);
+    let mut data_dir_lock = state.data_dir.lock().map_err(|_| "Mutex poisoned")?;
+    *data_dir_lock = Some(data_dir.clone());
+  }
 
-    // 10. Читаем логи в фоне
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            match event {
-                tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
-                    #[cfg(debug_assertions)]
-                    println!("[status-backend stdout] {}", String::from_utf8_lossy(&line));
-                }
-                tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
-                    #[cfg(debug_assertions)]
-                    println!("[status-backend stderr] {}", String::from_utf8_lossy(&line));
-                }
-                tauri_plugin_shell::process::CommandEvent::Terminated(payload) => {
-                    eprintln!("[status-backend] Terminated: {:?}", payload);
-                    // Сбрасываем состояние, чтобы UI знал, что бэкенд упал
-                    let state = app_handle.state::<BackendState>();
-                    let mut port_lock = state.port.lock().unwrap();
-                    *port_lock = None;
-                    let mut child_lock = state.child.lock().unwrap();
-                    *child_lock = None;
-                }
-                _ => {}
-            }
+  // 10. Читаем логи в фоне
+  let app_handle = app.clone();
+  tauri::async_runtime::spawn(async move {
+    while let Some(event) = rx.recv().await {
+      match event {
+        #[allow(unused_variables)]
+        tauri_plugin_shell::process::CommandEvent::Stdout(line) => {
+          #[cfg(debug_assertions)]
+          println!("[status-backend stdout] {}", String::from_utf8_lossy(&line));
         }
-    });
+        #[allow(unused_variables)]
+        tauri_plugin_shell::process::CommandEvent::Stderr(line) => {
+          #[cfg(debug_assertions)]
+          println!("[status-backend stderr] {}", String::from_utf8_lossy(&line));
+        }
+        tauri_plugin_shell::process::CommandEvent::Terminated(payload) => {
+          eprintln!("[status-backend] Terminated: {:?}", payload);
+          let state = app_handle.state::<BackendState>();
+          let mut port_lock = state.port.lock().unwrap();
+          *port_lock = None;
+          let mut child_lock = state.child.lock().unwrap();
+          *child_lock = None;
+        }
+        _ => {}
+      }
+    }
+  });
 
     Ok(StartBackendResponse {
         port,
@@ -441,9 +447,55 @@ fn stop_rpc_proxy(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+const APP_IDENTIFIER: &str = "com.magnus.stauri-app";
+
+/// Загружает .env из первого найденного места.
+///
+/// Путь `../.env` работает только когда cwd = src-tauri/, то есть в
+/// `pnpm tauri dev`. В release cwd — это каталог, откуда пользователь запустил
+/// приложение, а у AppImage он произвольный, поэтому ключи нужно искать по
+/// абсолютным путям, а не относительно cwd.
+///
+/// dotenv не перезаписывает уже заданные переменные окружения, поэтому
+/// значение из шелла по-прежнему имеет приоритет над файлом.
+fn load_env() {
+  let mut candidates: Vec<PathBuf> = Vec::new();
+
+  // 1. Пользовательский конфиг: ~/.config/com.magnus.stauri-app/.env
+  if let Some(dir) = dirs::config_dir() {
+    candidates.push(dir.join(APP_IDENTIFIER).join(".env"));
+  }
+
+  // 2. Рядом с исполняемым файлом (для AppImage — usr/bin/).
+  if let Ok(exe) = std::env::current_exe() {
+    if let Some(dir) = exe.parent() {
+      candidates.push(dir.join(".env"));
+    }
+  }
+
+  // 3. Каталог сборки — только для debug, чтобы release не тянул
+  //    путь машины разработчика.
+  if cfg!(debug_assertions) {
+    candidates.push(PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.env")));
+  }
+
+  // 4. Историческое поведение: cwd = src-tauri/.
+  candidates.push(PathBuf::from("../.env"));
+
+  for path in candidates {
+    if path.is_file() {
+      if dotenv::from_path(&path).is_ok() {
+        return;
+      }
+    }
+  }
+
+  eprintln!("Warning: .env not found; using environment variables only");
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  let _ = dotenv::from_path("../.env");
+  load_env();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())

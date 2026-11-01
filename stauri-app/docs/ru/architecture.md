@@ -2,8 +2,9 @@
 
 Документ описывает, как устроен Stauri «в целом»: из каких слоёв он состоит,
 как они общаются и почему границы проведены именно так. Он дополняет
-`networks_and_balances.md` (там — конкретный путь баланса на экран) и
-`status_outdated_architecture.md` (там — почему `status-go` устроен сложно).
+`networks_and_balances.md` (там — конкретный путь баланса на экран),
+`status_outdated_architecture.md` (там — почему `status-go` устроен сложно)
+и `BUILDING.md` (там — сборка `status-backend` в Nix).
 
 ## 1. Главное решение: сайдкар вместо библиотеки
 
@@ -23,6 +24,9 @@ Stauri не линкует `status-go` как библиотеку. Он зап�
 
 Плата за это — управление процессом: `start_backend` / `stop_backend`,
 PID-файл, убийство «зомби» при старте. Всё это живёт в `src-tauri/src/lib.rs`.
+Дополнительно: `status-backend` и `libsds.so` должны быть собраны в **одном
+Nix-окружении** (одна glibc, один ABI), иначе `status-backend` падает с
+`SIGSEGV` при загрузке `libsds.so` (см. `BUILDING.md`).
 
 ## 2. Слои
 
@@ -37,11 +41,12 @@ PID-файл, убийство «зомби» при старте. Всё это
 │ api.ts (вызовы), http.ts (транспорт), types.ts │
 ├──────────────────────────────────────────────────────────┤
 │ Tauri (Rust) │
-│ lib.rs: start_backend, RPC-форвардер, dApp-окна │
-│ rpc_proxy.rs: локальный HTTP-форвардер │
+│ lib.rs: start_backend, dApp-окна, LD_LIBRARY_PATH │
+│ rpc_proxy.rs: локальный HTTP-форвардер RPC │
+│ market.rs: прокси к CoinGecko с кэшем │
 ├──────────────────────────────────────────────────────────┤
-│ status-backend (сайдкар) │
-│ HTTP RPC + WS сигналы │
+│ Внешние источники │
+│ status-backend (HTTP+WS) CoinGecko (market) │
 └──────────────────────────────────────────────────────────┘
 text
 
@@ -55,9 +60,10 @@ text
   состояние.
 - **`http.ts`** — единственное место, где живёт транспорт, логирование и
   разбор ошибок JSON-RPC.
-- **Tauri** — процессы, окна, локальные сокеты. Там, где нужен Rust
-  (`reqwest`, `tokio`, `std::process`).
+- **Tauri** — процессы, окна, локальные сокеты, запросы к внешним API.
+  Там, где нужен Rust (`reqwest`, `tokio`, `std::process`).
 - **`status-backend`** — «чёрный ящик» со своим состоянием и кэшами.
+- **CoinGecko** — внешний источник рыночных данных, не связан с `status-go`.
 
 Ничто выше Tauri не знает, что внутри Rust. Ничто выше `api.ts` не знает,
 что внутри HTTP. Это позволяет менять транспорт (например, на Unix-socket),
@@ -101,7 +107,27 @@ text
 в будущем), её нужно запускать отдельно, не блокируя разбор следующего
 сигнала.
 
-### 3.3. Состояние
+### 3.3. Внешние API (Market)
+
+UI → invoke('fetch_market_data')
+→ market.rs (Rust) → reqwest → CoinGecko
+← JSON-ответ → кэш в Rust (60 с) → Vec<MarketCoin>
+← store/компонент обновляет $state
+← UI перерисовывается
+text
+
+
+Рыночные данные **не идут через `status-go`**. Это отдельный модуль:
+- `market.rs` кэширует ответ на 60 секунд, чтобы не превышать лимиты
+  CoinGecko (keyless или Demo-ключ);
+- `COINGECKO_KEY` читается из `.env` через `dotenv` при старте Rust;
+- ошибки (403, timeout, parse) возвращаются как `String` и показываются в UI.
+
+Почему так: `status-go` умеет отдавать рыночные данные, но это тянет
+зависимость от `market-proxy` и его кэшей. Для Stauri проще и чище
+ходить в CoinGecko напрямую из Rust.
+
+### 3.4. Состояние
 
 Всё состояние — в `$state`-объектах сторов:
 
@@ -168,6 +194,13 @@ text
 - **Три состояния** различаются в UI: пустой каталог / RPC недоступен /
   всё нормально.
 
+UI кошелька (`WalletMain.svelte`) — 5 вкладок: **Assets / Send / Receive /
+Buy / Swap**. Assets группирует токены по `(symbol, chainGroup)`, где
+`chainGroup` = EVM (Ethereum, Optimism, Arbitrum, Base), BSC (Binance) или
+chainId. Иконки: `cryptocurrency-icons` по символу → Trust Wallet Assets по
+адресу контракта (кэш в `localStorage`) → буква. Нулевые балансы не
+отбрасываются, `hasError` показывается меткой.
+
 ### 4.4. Market
 
 `market.rs` (Rust) + `MarketMain.svelte`. Никакой связи с `status-go`:
@@ -182,7 +215,6 @@ text
 (CoinGecko отдаёт float). `#[serde(default)]` защищает от отсутствия
 `price_change_percentage_24h`.
 
-
 ### 4.5. dApp-окна
 
 `open_dapp_window` создаёт отдельное окно Tauri с `WebviewUrl::External`.
@@ -191,6 +223,21 @@ text
 
 В будущем — безопасная инъекция `window.ethereum` с гранулированными
 разрешениями (см. `README_ru.md`, «Безопасность через изоляцию»).
+
+### 4.6. Сборка и релиз
+
+`scripts/release.sh` собирает AppImage:
+
+1. `pnpm tauri build --no-bundle` — Rust-бинарник и `status-backend`.
+2. Вручную создаётся `AppDir`: `status-backend` в `usr/bin/`, `libsds.so` в
+   `usr/lib/`, `RPATH=$ORIGIN/../lib`, `AppRun` с `LD_LIBRARY_PATH`.
+3. `linuxdeploy` запускается с обходом `ldd` segfault (обёртка `/tmp/bin/ldd`)
+   и `NO_STRIP=1`.
+4. Проверяется, что `libsds.so` внутри AppImage.
+
+`status-backend` и `libsds.so` **не пересобираются** в `release.sh` — они
+должны быть заранее собраны в Nix (см. `BUILDING.md`) и лежать в
+`src-tauri/binaries/`.
 
 ## 5. Почему именно так (альтернативы)
 
@@ -201,6 +248,7 @@ text
 | Держать всё состояние в одном сторе | Сторы начинают зависеть друг от друга; тесты усложняются |
 | Общаться с блокчейном напрямую из UI | Нет keystore, нет подписи, нет мультичейна; `status-go` всё равно нужен для мессенджера |
 | Использовать готовый `status-desktop` | Монолит QML; нет модульности, нет dApp-изоляции, нет Svelte |
+| Брать рыночные данные из `status-go` | Тянет `market-proxy` и его кэши; проще ходить в CoinGecko из Rust |
 
 ## 6. Инварианты архитектуры
 
@@ -212,7 +260,9 @@ text
    ключей пока не сделано).
 6. dApp-окна изолированы от главного окна.
 7. Rust-команды — единственный способ общаться с ОС (процессы, сокеты,
-   окна).
+   окна) и с внешними API (CoinGecko).
+8. Market не зависит от `status-go`; его можно отключить, не ломая кошелёк.
+9. `status-backend` и `libsds.so` — из одного Nix-окружения (см. `BUILDING.md`).
 
 ## 7. Что меняется при добавлении функции
 
@@ -228,9 +278,17 @@ text
 Если шаг 3 нужен, это сигнал, что операция асинхронная и её нельзя
 сделать «в лоб» из UI. Пример в будущем — Router (`wallet.router.*`).
 
+Для внешних API (как Market) путь другой:
+
+1. **`src-tauri/src/<module>.rs`** — команда Tauri с `reqwest` и кэшем.
+2. **`api.ts`** — обёртка `invoke('<module_command>')`.
+3. **Стор / компонент** — вызывает обёртку, рендерит данные.
+4. **Тесты** — если возможно, мок `invoke`; иначе — ручная проверка.
+
 ## 8. Ссылки
 
 - `networks_and_balances.md` — путь баланса на экран, кэши, форвардер.
 - `status_outdated_architecture.md` — почему `status-go` устроен сложно.
+- `BUILDING.md` — сборка `status-backend` в Nix и подготовка sidecar.
 - `tests.md` — стратегия тестирования.
 - `README_ru.md` — обзор проекта и статус.

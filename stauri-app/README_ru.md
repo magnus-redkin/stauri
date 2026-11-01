@@ -1,5 +1,3 @@
-## README_ru
-
 # Stauri (Клиент Status на Tauri)
 
 **Stauri** — это легкий десктопный клиент для экосистемы Status, разрабатываемый как активно развивающаяся альтернатива официальному `status-desktop`.
@@ -32,26 +30,82 @@
 - [`docs/ru/networks_and_balances.md`](docs/ru/networks_and_balances.md) — путь баланса на экран, RPC-форвардер, кэши `status-go`.
 - [`docs/ru/status_outdated_architecture.md`](docs/ru/status_outdated_architecture.md) — почему `status-go` устроен сложно (RPC-клиенты, провайдеры).
 - [`docs/ru/tests.md`](docs/ru/tests.md) — стратегия тестирования (unit, component, E2E, ручные проверки).
-- [`BUILDING.md`](BUILDING.md) — сборка из исходников, подготовка бинарников.
+- [`BUILDING.md`](BUILDING.md) — сборка `status-backend` в Nix и подготовка sidecar.
+
+## 🧩 Что уже реализовано
+
+### 💼 Кошелёк (Wallet)
+
+Главный экран кошелька — 5 вкладок: **Assets / Send / Receive / Buy / Swap**.
+
+- **Assets** — список токенов, сгруппированных по `(symbol, chainGroup)`, где `chainGroup` = EVM (Ethereum, Optimism, Arbitrum, Base), BSC (Binance) или chainId. Иконки берутся из `cryptocurrency-icons` (по символу), fallback — Trust Wallet Assets (по адресу контракта) с кэшем в `localStorage`, последний fallback — буква. Нулевые балансы не отбрасываются, `hasError` показывается меткой.
+- **Send** — форма-заглушка (токен, получатель, сумма, Review). Логика Router — в работе.
+- **Receive** — адрес и QR-код (через `api.qrserver.com`), кнопка «Скопировать».
+- **Buy** — вкладка disabled (OnRamp будет добавлен позже).
+- **Swap** — вкладка disabled (Router/Swap будет добавлен позже).
+
+В левой колонке — информация об аккаунте (`All accounts`, количество токенов, сокращённый адрес) и ссылка **Manage accounts** (иконка Wallet + карандаш).
+
+### 📈 Market
+
+Отдельный модуль, **не зависящий от `status-go`**:
+
+- `src-tauri/src/market.rs` — Tauri-команда `fetch_market_data`, которая делает `reqwest` к CoinGecko (`/coins/markets`), передаёт `x-cg-demo-api-key` из `.env` и кэширует ответ на 60 секунд.
+- `MarketMain.svelte` — таблица топ-50 монет (цена, 24h, объём, капитализация), иконки из CoinGecko (`image` URL).
+- Ключ `COINGECKO_KEY` читается через `dotenv` при старте Rust. Если не задан — Market покажет ошибку «COINGECKO_KEY не задан».
+
+Почему так: `status-go` умеет отдавать рыночные данные, но это тянет зависимость от `market-proxy` и его кэшей. Для Stauri проще и чище ходить в CoinGecko напрямую из Rust.
+
+### 💬 Чат и контакты
+
+- Список чатов (`ChatLeft`), окно сообщений (`ChatMain`), поиск, отправка.
+- Контакты (`ContactsLeft`, `ContactsMain`), добавление по публичному ключу, принятие запросов.
+- Бейдж непрочитанных запросов в сайдбаре.
+
+### 🔐 Профиль
+
+- Информация об аккаунте (Profile ID, Public Key, Network, Chain ID, RPC, Waku Fleet).
+- Редактирование профиля (Display Name, ENS — отложено).
+- Создание и проверка seed-фразы (плейсхолдер, не подключено к бэкенду).
+- Отключение (`Disconnect`).
+
+### 🖥️ Настройки
+
+- Язык: **English / Русский / 中文 / Español**.
+- Тема: **Maroon / Light / Dark**.
+- Размер шрифта (12–20 px).
+
+### 🌐 dApp-окна
+
+`open_dapp_window` создаёт изолированное окно Tauri WebView с внешним URL. В будущем — безопасная инъекция `window.ethereum` с гранулированными разрешениями.
 
 ## ⚠️ Известные ограничения и сложности
 
-- **Портативность бинарных файлов Nix:** Бинарный файл `status-backend`, скомпилированный в Nix, жестко привязан к Nix `glibc` (через `/nix/store`). В текущем прототипе мы используем `patchelf` для замены интерпретатора и RPATH, а также вручную собираем `libsds.so`. Для релиза потребуется полноценный кроссплатформенный пайплайн сборки (избегающий Nix для продакшн-бинарников).
+- **Nix-сборка `status-backend`:** бинарник `status-backend` и `libsds.so` должны быть собраны **в одном Nix-окружении** (одна glibc, один ABI). Если собрать `status-backend` системным Go, а `libsds.so` взять из Nix store (или наоборот), `status-backend` падает с `SIGSEGV` при загрузке `libsds.so`. Подробности — в `BUILDING.md`.
+- **`CGO_LDFLAGS`/`CGO_CFLAGS`:** локальные переменные (vosk, whisper, portaudio, onnxruntime) подмешивают системные библиотеки (например, `libmp3lame` под glibc 2.43) и ломают Nix-сборку. Перед `make status-backend` в Nix shell нужно `unset CGO_LDFLAGS CGO_CFLAGS`.
+- **`ldd` segfault на `status-backend`:** `linuxdeploy` падает при анализе `status-backend` (exit 139). Обход — обёртка `/tmp/bin/ldd`, которая для `status-backend` отвечает `statically linked`. Используется в `release.sh`.
+- **AppImage и Nix-glibc:** AppImage, собранный с Nix-овским `status-backend`, может падать на системах с другой glibc (например, Ubuntu 26.04). Для релиза нужен кроссплатформенный пайплайн сборки (избегающий Nix для продакшн-бинарников).
 - **Накладные расходы сайдкара:** Запуск `status-backend` как отдельного процесса упрощает интеграцию, но требует тщательного управления жизненным циклом (запуск, остановка и предотвращение появления зомби-процессов).
 - **Кэши `status-go`:** RPC-клиенты кэшируются навсегда, кэш балансов не инвалидируется. Это требует особого порядка запуска и локального RPC-форвардера (см. `docs/ru/networks_and_balances.md`).
-- **Полнота функционала:** В настоящее время реализованы только базовые функции (вход, запуск мессенджера, получение адреса кошелька, балансы, открытие окна dApp). Полноценный обмен сообщениями, управление контактами, Send/Receive/Swap/Buy и инъекция `window.ethereum` находятся в активной разработке.
+- **Полнота функционала:** Send/Receive/Swap/Buy — в работе; инъекция `window.ethereum`, Manage Tokens, Sell — запланированы.
 
 ## 🚀 Текущий статус
 
 Stauri находится в фазе активного прототипирования. Следующие ключевые функции уже работают:
+
 - Динамический запуск сайдкара `status-backend` с автоматическим выделением порта и изоляцией `dataDir` с учетом сети.
-- WebSocket-соединение для парсинга сигналов в реальном времени.
-- Процесс создания аккаунта и входа в систему.
+- WebSocket-соединение для парсинга сигналов в реальном времени (`node.login`, `node.stopped`, `messages.new`).
+- Создание аккаунта и вход в систему.
 - Инициализация сервисов мессенджера и кошелька.
 - Получение адресов кошелька (`accounts_getAccounts`, фильтр `chat = false`).
-- Загрузка балансов с метаданными токенов (`wallet_getTokensForActiveNetworksMode`).
+- Загрузка балансов с метаданными токенов (`wallet_getTokensForActiveNetworksMode`) и группировкой по сетям.
 - Локальный RPC-форвардер (`127.0.0.1:43057`) и регистрация user-провайдера `stauri-rpc`.
 - Перезапуск ноды при изменении провайдеров (только при `wroteProviders`).
+- 5 вкладок кошелька (Assets / Send / Receive / Buy / Swap), группировка токенов, иконки, кэш.
+- Market на CoinGecko (Rust-команда, кэш 60 с, ключ из `.env`).
+- Чат и контакты (список, поиск, отправка, принятие запросов).
+- Профиль (информация, редактирование, seed-фраза как плейсхолдер).
+- Настройки (языки: en/ru/zh/es, темы: maroon/light/dark, размер шрифта).
 - Открытие dApps в изолированных окнах Tauri (WebView).
 - Динамическая конфигурация сети через переменные окружения или JSON.
 
@@ -59,57 +113,81 @@ Stauri находится в фазе активного прототипиро�
 
 ## 🛠 Сборка из исходного кода
 
-Stauri требует предварительно собранный бинарный файл `status-backend` из репозитория Status Go, который должен быть пропатчен для вашей целевой системы.
+Stauri требует предварительно собранный бинарный файл `status-backend` и `libsds.so` из репозитория Status Go. Они должны быть собраны **в одном Nix-окружении**.
 
-Подробные инструкции по подготовке бинарных файлов Nix и компиляции проекта см. в файле [BUILDING.md](./BUILDING.md).
+Подробные инструкции — в файле [BUILDING.md](./BUILDING.md). Кратко:
 
-## 🗺️ Roadmap (TODO)
-### Сделано
+```bash
+# 1. Собрать status-backend в Nix
+cd ~/ETH/github.status-go
+nix develop --extra-experimental-features 'nix-command flakes'
+unset CGO_LDFLAGS CGO_CFLAGS
+make status-backend
+find /nix/store -name "libsds.so"   # взять ту, что в -L при линковке
 
+# 2. Скопировать в Stauri
+cp ~/ETH/github.status-go/build/bin/status-backend \
+   ~/ETH/stauri/stauri-app/src-tauri/binaries/status-backend-x86_64-unknown-linux-gnu
+cp /nix/store/<hash>-nim-sds-.../lib/libsds.so \
+   ~/ETH/stauri/stauri-app/src-tauri/binaries/libsds.so
+
+# 3. Запустить
+cd ~/ETH/stauri/stauri-app
+pnpm install
+pnpm tauri dev
+
+# 4. Собрать AppImage
+./scripts/release.sh 0.2.0
+
+# 🗺️ Roadmap (TODO)
+## Сделано
 - Запуск и остановка status-backend (sidecar, PID, зомби).
 - WebSocket-сигналы (node.login, node.stopped, messages.new).
 - Создание аккаунта и вход.
-- Запуск мессенджера.
-- Запуск кошелька.
+- Запуск мессенджера и кошелька.
 - Адреса из accounts_getAccounts (chat = false).
 - Балансы с метаданными (wallet_getTokensForActiveNetworksMode).
 - RPC-форвардер и user-провайдер stauri-rpc.
 - Перезапуск ноды при изменении провайдеров.
+- 5 вкладок кошелька (Assets / Send / Receive / Buy / Swap), группировка токенов, иконки, кэш.
+- Market на CoinGecko (Rust-команда, кэш 60 с, ключ из .env).
+- Чат и контакты (список, поиск, отправка, принятие запросов).
+- Профиль (информация, редактирование, seed-фраза как плейсхолдер).
+- Настройки (4 языка, 3 темы, размер шрифта).
 - dApp-окна (изолированные WebView).
 - Динамическая конфигурация сети.
 
-### В работе
-
+## В работе
 - Send — перевод ETH/ERC-20. Требует Router (wallet_getSuggestedRoutesAsync), подписи и отправки (wallet_SendRouterTransactionsWithSignatures), обработки сигналов wallet.router.*.
-- Receive — адрес и QR-код. Просто, но нужно для полноты кошелька.
+- Receive — адрес и QR-код (UI готов, нужна интеграция с кошельком).
+- AppImage — сборка работает, но status-backend из Nix падает на системах с другой glibc. Нужен кроссплатформенный пайплайн.
 
-### Запланировано
-
+## Запланировано
 - Swap + Bridge — обмен токенов. Использует тот же Router, что и Send, но с маршрутом. Провайдер — Relay/ParaSwap (зависит от версии status-go).
 - Buy (OnRamp) — покупка крипты. Стандартный вариант — wallet_getCryptoOnRamps (MoonPay). Кастомные провайдеры (P2P, обменники) — через интерфейс BuyProvider (dApp-расширение).
-- Market — рыночные данные (цены, изменения). Источник — wallet_getMarketData или аналог.
 - Покупка ETH имени (ENS) — регистрация ENS-имени. Требует Router и подписи, как Send.
-- Контакты и чаты — полноценный обмен сообщениями.
+- Контакты и чаты — полноценный обмен сообщениями (сейчас — только UI).
 - Инъекция window.ethereum в dApp-окна с гранулированными разрешениями.
 - Manage Tokens — скрытие токенов, фильтр «пыли», управление списками (CoinGecko, Status Token List).
+- Manage accounts — Add, Rename, Remove, Set active.
 - Sell (OffRamp) — продажа крипты за фиат. В status-go пока нет API; возможен через P2P-ссылки.
 
-## 📦 Технологический стек
+# 📦 Технологический стек
+- Фронтенд: Svelte 5, SvelteKit, Tailwind CSS, shadcn-svelte
+- Бэкенд: Rust, Tauri 2
+- Интеграция со Status: status-backend (сайдкар), WebSocket (сигналы), HTTP (RPC)
+- Market: CoinGecko API (через Rust-команду fetch_market_data)
 
-- **Фронтенд:** Svelte 5, SvelteKit, Tailwind CSS, shadcn-svelte
-- **Бэкенд:** Rust, Tauri 2
-- **Интеграция со Status:** `status-backend` (сайдкар), WebSocket (сигналы), HTTP (RPC)
+# 🧪 Тестирование
 
-## 🧪 Тестирование
+Стратегия тестирования описана в docs/ru/tests.md. Кратко:
+bash
 
-Стратегия тестирования описана в [`docs/ru/tests.md`](docs/ru/tests.md). Кратко:
-
-```bash
-# Rust unit-тесты
+### Rust unit-тесты
 cd src-tauri && cargo test
 
-# Frontend unit-тесты (Vitest)
+### Frontend unit-тесты (Vitest)
 pnpm test
 
-# E2E (Playwright)
+### E2E (Playwright)
 pnpm test:e2e

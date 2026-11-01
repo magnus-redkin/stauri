@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-app",
-  "version": "0.1.0",
-  "identifier": "com.magnus.tauri-app",
+  "productName": "stauri-app",
+  "version": "0.2.0",
+  "identifier": "com.magnus.stauri-app",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,6 @@
   "app": {
     "windows": [
       {
-
         "title": "Stauri",
         "width": 1200,
         "height": 900,
@@ -25,7 +24,9 @@
     }
   },
   "bundle": {
-    "externalBin": ["binaries/status-backend"],
+    "externalBin": [
+      "binaries/status-backend"
+    ],
     "resources": {
       "binaries/libsds.so": "libsds.so"
     },

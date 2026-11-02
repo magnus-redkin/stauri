@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Метаданные AppStream для Linux-сборки.
+
+  Зачем это нужно: без файла metainfo приложение для каталогов и центров
+  установки безымянное — видно только имя бинарника. Наличие метаданных
+  проверяют и `appstreamcli validate`, и линтеры AppImage.
+
+  Проверка перед релизом (есть в release.sh):
+    appstreamcli validate src-tauri/metainfo/com.magnus.stauri-app.metainfo.xml
+
+  Имя файла обязано совпадать с `id`, а `id` — с Tauri `identifier`
+  (src-tauri/tauri.conf.json). Иначе metainfo не найдётся.
+-->
+<component type="desktop-application">
+  <id>com.magnus.stauri-app</id>
+
+  <name>Stauri</name>
+  <summary>Лёгкий клиент Status</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MPL-2.0</project_license>
+
+  <description>
+    <p>
+      Stauri — лёгкий клиент сети Status: децентрализованные чаты, контакты
+      и криптокошелёк в одном приложении. Работает поверх Waku и EVM-сетей,
+      не требует собственного сервера и не хранит переписку в облаке.
+    </p>
+    <p>Возможности:</p>
+    <ul>
+      <li>Чаты и контакты через Waku</li>
+      <li>Кошелёк для Ethereum, Optimism, BSC, Base и Arbitrum</li>
+      <li>Просмотр балансов и рыночных данных</li>
+      <li>Локальное хранение ключей: seed-фраза не покидает приложение</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">stauri-app.desktop</launchable>
+
+  <url type="homepage">https://github.com/magnus-redkin/stauri</url>
+  <url type="bugtracker">https://github.com/magnus-redkin/stauri/issues</url>
+
+  <developer id="com.magnus">
+    <name>Magnus Redkin</name>
+  </developer>
+
+  <categories>
+    <category>Network</category>
+    <category>InstantMessaging</category>
+  </categories>
+
+  <keywords>
+    <keyword>status</keyword>
+    <keyword>messenger</keyword>
+    <keyword>waku</keyword>
+    <keyword>ethereum</keyword>
+    <keyword>wallet</keyword>
+  </keywords>
+
+  <!--
+    Блок <screenshots> намеренно отсутствует: каталоги требуют живых URL, а
+    скриншотов в репозитории пока нет. Ссылка на несуществующий файл хуже,
+    чем её отсутствие. Добавить, когда появятся docs/screenshots/*.png.
+  -->
+
+  <releases>
+    <!-- Версия подставляется release.sh из аргумента сборки. -->
+    <release version="0.2.0" date="2026-11-02">
+      <description>
+        <p>Первый публичный релиз.</p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1"/>
+
+  <requires>
+    <display_length compare="ge">800</display_length>
+  </requires>
+</component>

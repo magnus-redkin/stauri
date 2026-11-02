@@ -24,6 +24,7 @@ vi.mock('$lib/status/api', () => ({
   startRpcProxy: vi.fn(),
   setRpcUpstreams: vi.fn(),
   startMessenger: vi.fn(),
+  getAuthToken: vi.fn().mockResolvedValue('test-token'),
   logout: vi.fn(),
 }));
 

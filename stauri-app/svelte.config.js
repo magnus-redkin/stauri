@@ -15,6 +15,17 @@ const config = {
     alias: {
       $lib: './src/lib'
     },
+    csp: {
+      mode: 'auto',
+      directives: {
+        'script-src': ['self'],
+        'style-src': ['self', 'unsafe-inline'],
+        'img-src': ['self', 'data:', 'blob:', 'https://raw.githubusercontent.com', 'https://coin-images.coingecko.com', 'https://assets.coingecko.com'],
+        'connect-src': ['self', 'http://127.0.0.1:*', 'ws://127.0.0.1:*', 'https://raw.githubusercontent.com', 'ipc:', 'http://ipc.localhost'],
+        'object-src': ['none'],
+        'base-uri': ['self']
+      }
+    },
   },
 };
 

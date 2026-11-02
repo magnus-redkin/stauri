@@ -6,7 +6,7 @@ import { contactsState } from '$lib/stores/contactsStore.svelte';
 
 // Мокаем store, чтобы не вызывать реальную загрузку
 vi.mock('$lib/stores/contactsStore.svelte', async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual = await importOriginal<typeof import('$lib/stores/contactsStore.svelte')>();
   return {
     ...actual,
     loadContacts: vi.fn(), // Не загружаем реально

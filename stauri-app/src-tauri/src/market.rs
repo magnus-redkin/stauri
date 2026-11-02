@@ -1,3 +1,4 @@
+use crate::error::{AppError, AppResult};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
@@ -25,14 +26,13 @@ static CACHE: Lazy<Mutex<Option<CacheEntry>>> = Lazy::new(|| Mutex::new(None));
 const CACHE_TTL: Duration = Duration::from_secs(60);
 
 #[tauri::command]
-pub async fn fetch_market_data() -> Result<Vec<MarketCoin>, String> {
+pub async fn fetch_market_data() -> AppResult<Vec<MarketCoin>> {
     // 1. Проверяем кэш
-    if let Ok(guard) = CACHE.lock() {
-        if let Some(entry) = &*guard {
-            if entry.fetched_at.elapsed() < CACHE_TTL {
-                return Ok(entry.data.clone());
-            }
-        }
+    if let Ok(guard) = CACHE.lock()
+        && let Some(entry) = &*guard
+        && entry.fetched_at.elapsed() < CACHE_TTL
+    {
+        return Ok(entry.data.clone());
     }
 
     // 2. Ключ CoinGecko — необязателен.
@@ -51,11 +51,11 @@ pub async fn fetch_market_data() -> Result<Vec<MarketCoin>, String> {
         &price_change_percentage=24h";
 
     // 3. Запрос
-  let client = reqwest::Client::builder()
-    .no_proxy()
+    let client = reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(10))
         .build()
-        .map_err(|e| format!("Client build error: {e}"))?;
+        .map_err(|e| AppError::internal(format!("client build error: {e}")))?;
 
     let mut request = client.get(url).header("Accept", "application/json");
     if !api_key.is_empty() {
@@ -65,30 +65,26 @@ pub async fn fetch_market_data() -> Result<Vec<MarketCoin>, String> {
     let resp = request
         .send()
         .await
-        .map_err(|e| format!("Request failed: {e}"))?;
+        .map_err(|e| AppError::network(format!("request failed: {e}")))?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!(
-            "CoinGecko HTTP {}: {}",
-            status,
-            body.chars().take(300).collect::<String>()
-        ));
+        // Тело ответа не включаем: оно может содержать служебные данные.
+        return Err(AppError::network(format!(
+            "CoinGecko HTTP {status} ({} bytes)",
+            body.len()
+        )));
     }
 
     // 4. Читаем тело (для диагностики при ошибке парсинга)
     let body = resp
         .text()
         .await
-        .map_err(|e| format!("Body read error: {e}"))?;
+        .map_err(|e| AppError::network(format!("body read error: {e}")))?;
 
-    let data: Vec<MarketCoin> = serde_json::from_str(&body).map_err(|e| {
-        format!(
-            "JSON parse error: {e}\nBody (first 500): {}",
-            body.chars().take(500).collect::<String>()
-        )
-    })?;
+    let data: Vec<MarketCoin> = serde_json::from_str(&body)
+        .map_err(|e| AppError::network(format!("JSON parse error: {e}")))?;
 
     // 5. Сохраняем в кэш
     if let Ok(mut guard) = CACHE.lock() {

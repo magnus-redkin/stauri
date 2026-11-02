@@ -1,5 +1,6 @@
 import { statusState } from './statusStore.svelte';
 import { getContacts, sendContactRequest, acceptContactRequest } from '$lib/status/api';
+import { formatError } from '$lib/utils/errors';
 import { setPendingRequestsCount } from './statusStore.svelte';
 
 export const contactsState = $state({
@@ -22,7 +23,7 @@ export async function loadContacts(force = false) {
     setPendingRequestsCount(pendingCount);
     contactsState.loaded = true;
   } catch (e: any) {
-    contactsState.error = e.message;
+    contactsState.error = formatError(e);
   } finally {
     contactsState.isLoading = false;
   }

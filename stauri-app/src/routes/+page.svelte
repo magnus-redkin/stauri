@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { formatError } from '$lib/utils/errors';
 
   // Сторы
   import {
@@ -49,21 +50,6 @@
   import MarketMain from "$lib/sections/market/MarketMain.svelte";
   import ChatLeft from "$lib/sections/chat/ChatLeft.svelte";
   import ChatMain from "$lib/sections/chat/ChatMain.svelte";
-
-
-  // 🔥 ЖЕСТКИЙ ТЕСТ ЧТЕНИЯ .ENV НА СТОРОНЕ VITE
-  const debugAlchemy = import.meta.env.VITE_ALCHEMY_KEY;
-  const debugInfura = import.meta.env.VITE_INFURA_KEY;
-
-  console.log("=========================================");
-  console.log("🚨 [Vite ENV Verification]");
-  console.log("VITE_ALCHEMY_KEY:", debugAlchemy ? "✅ НАЙДЕН (..." + debugAlchemy.slice(-5) + ")" : "❌ UNDEFINED!");
-  console.log("VITE_INFURA_KEY:", debugInfura ? "✅ НАЙДЕН (..." + debugInfura.slice(-5) + ")" : "❌ UNDEFINED!");
-  console.log("=========================================");
-
-  if (!debugAlchemy || !debugInfura) {
-    console.error("💥 КРИТИЧЕСКАЯ ОШИБКА: Vite не смог прочитать .env файл! Балансы кошелька не будут работать.");
-  }
 
 
   // Навигация
@@ -134,7 +120,7 @@
       await login(password, selectedAccountKeyUid);
       activeSection = 'home';
     } catch (e: any) {
-      statusState.errorMsg = `Login failed: ${e.message}`;
+      statusState.errorMsg = `Login failed: ${formatError(e)}`;
     }
   }
 
@@ -147,7 +133,7 @@
       }
       activeSection = 'home';
     } catch (e: any) {
-      statusState.errorMsg = `Create account failed: ${e.message}`;
+      statusState.errorMsg = `Create account failed: ${formatError(e)}`;
     }
   }
 

@@ -1,4 +1,6 @@
 import { statusState } from './statusStore.svelte';
+import { debug } from '$lib/utils/log';
+import { formatError } from '$lib/utils/errors';
 import {
   startWallet,
   getAccounts,
@@ -41,6 +43,8 @@ function tokenKey(chainId: number, address: string): string {
 
 /** Карта метаданных: "chainId:адрес" -> { symbol, decimals }. */
 function buildMetadataMap(tokens: any[]): Map<string, { symbol: string; decimals: number }> {
+  // Локальная карта на время вызова, в реактивности не участвует.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const map = new Map<string, { symbol: string; decimals: number }>();
   for (const t of tokens) {
     const chainId = Number(t.chainId);
@@ -69,7 +73,7 @@ function buildMetadataMap(tokens: any[]): Map<string, { symbol: string; decimals
  * кошелёк.
  */
 export async function loadWallet(force = false) {
-  console.log('[walletStore] loadWallet called', {
+  debug('[walletStore] loadWallet called', {
     port: statusState.backendPort,
     loaded: walletState.loaded,
     isLoading: walletState.isLoading,
@@ -85,7 +89,7 @@ export async function loadWallet(force = false) {
     return;
   }
   if (walletState.loaded && !force) {
-    console.log('[walletStore] already loaded, skip (use force=true to reload)');
+    debug('[walletStore] already loaded, skip (use force=true to reload)');
     return;
   }
 
@@ -137,6 +141,7 @@ export async function loadWallet(force = false) {
       }
     }
     const metadata =
+      // eslint-disable-next-line svelte/prefer-svelte-reactivity -- локальный кэш на время вызова
       cachedMetadata ?? new Map<string, { symbol: string; decimals: number }>();
 
     // 4. Балансы — по всем адресам аккаунтов кошелька сразу.
@@ -214,12 +219,12 @@ export async function loadWallet(force = false) {
       walletState.rpcError = '';
     }
 
-    console.log('[walletStore] ✓ loaded', {
+    debug('[walletStore] ✓ loaded', {
       tokens: parsed.length,
       errored,
     });
   } catch (e: any) {
-    walletState.error = e.message || 'Failed to load wallet';
+    walletState.error = formatError(e, 'Failed to load wallet');
     console.error('[walletStore] ✗ Wallet error:', e);
   } finally {
     walletState.isLoading = false;

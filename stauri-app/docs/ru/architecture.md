@@ -228,16 +228,52 @@ chainId. Иконки: `cryptocurrency-icons` по символу → Trust Wall
 
 `scripts/release.sh` собирает AppImage:
 
-1. `pnpm tauri build --no-bundle` — Rust-бинарник и `status-backend`.
+1. `pnpm tauri build` — Rust-бинарник и `status-backend`. Флаг `--no-bundle`
+   не нужен: в `tauri.conf.json` стоит `"targets": []`, то есть бандлинг
+   выключен в самом конфиге, а не в командной строке.
 2. Вручную создаётся `AppDir`: `status-backend` в `usr/bin/`, `libsds.so` в
-   `usr/lib/`, `RPATH=$ORIGIN/../lib`, `AppRun` с `LD_LIBRARY_PATH`.
-3. `linuxdeploy` запускается с обходом `ldd` segfault (обёртка `/tmp/bin/ldd`)
-   и `NO_STRIP=1`.
-4. Проверяется, что `libsds.so` внутри AppImage.
+   `usr/lib/`, патч интерпретатора на системный загрузчик, `RPATH=$ORIGIN`
+   и `AppRun` с очищенным `LD_LIBRARY_PATH`.
+3. `linuxdeploy` запускается с `NO_STRIP=1`; обход `ldd` segfault больше не
+   нужен — после патча интерпретатора `ldd` отрабатывает штатно.
+4. Проверяется, что `libsds.so` внутри AppImage и что `status-backend`
+   запускается под унаследованным `LD_LIBRARY_PATH`.
 
 `status-backend` и `libsds.so` **не пересобираются** в `release.sh` — они
 должны быть заранее собраны в Nix (см. `BUILDING.md`) и лежать в
 `src-tauri/binaries/`.
+
+### 4.7. Обновления
+
+Проверка и установка вынесены в Rust (`src-tauri/src/updater.rs`), а не в
+JS-плагин. Причина та же, что у аутентифицирующего прокси и seed: webview —
+самое уязвимое место, и `updater:default` дал бы странице право самой
+запускать установку. В `capabilities/default.json` этого permission нет,
+фронтенд ходит через две команды — `check_for_update` и `install_update`.
+
+Конфигурация живёт в `tauri.conf.json` (`plugins.updater.endpoints` и
+`plugins.updater.pubkey`). Пока `pubkey` пуст, `check_for_update` сразу
+возвращает `None`: подпись проверяется только при установке, поэтому без
+ключа интерфейс показывал бы заведомо нерабочую кнопку «Установить».
+
+Порядок релиза:
+
+1. `pnpm tauri signer generate -w ~/.tauri/stauri.key` — один раз. Публичная
+   часть идёт в `plugins.updater.pubkey`, приватная не попадает в репозиторий.
+2. `TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/stauri.key ./scripts/release.sh 0.2.0`
+3. В релиз GitHub загружаются три файла: `Stauri-x86_64.AppImage`,
+   `Stauri-x86_64.AppImage.sig`, `latest.json`.
+
+`release.sh` сам собирает `latest.json` в формате «static» с ключом
+`linux-x86_64` — так называется платформа в `tauri-plugin-updater`
+(`updater_os + "-" + updater_arch`), менять ключ нельзя.
+
+Обновление ставится по нажатию, а не автоматически. Подмена приложения —
+самый ценный сценарий атаки, и оставлять её решение фоновому процессу в
+программе, которая держит ключи, нельзя.
+
+На Linux файл подменяется на месте, поэтому после установки нужен перезапуск:
+текущий процесс продолжает работать со старым кодом.
 
 ## 5. Почему именно так (альтернативы)
 

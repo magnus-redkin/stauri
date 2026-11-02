@@ -7,6 +7,11 @@ vi.mock('@tauri-apps/plugin-http', () => ({
   fetch: vi.fn(),
 }));
 
+// Токен аутентифицирующего прокси приходит из Rust-команды.
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn().mockResolvedValue('test-token'),
+}));
+
 describe('statusFetch', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -23,7 +28,10 @@ describe('statusFetch', () => {
 
     expect(tauriFetch).toHaveBeenCalledWith('http://127.0.0.1:8080/statusgo/TestEndpoint', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Stauri-Token': 'test-token',
+      },
       body: JSON.stringify({ foo: 'bar' }),
     });
     expect(result).toEqual({ result: 'success', data: 123 });
@@ -48,7 +56,11 @@ describe('statusFetch', () => {
     };
     vi.mocked(tauriFetch).mockResolvedValue(mockResponse as any);
 
-    await expect(statusFetch(8080, 'Fail', {})).rejects.toThrow('HTTP 500: Internal Server Error details...');
+    // Тело ответа намеренно не попадает в текст ошибки: оно может содержать
+    // данные профиля. Остаётся только код статуса.
+    const promise = statusFetch(8080, 'Fail', {});
+    await expect(promise).rejects.toThrow('HTTP 500');
+    await expect(promise).rejects.not.toThrow('Internal Server Error details');
   });
 
   it('должен выбрасывать ошибку при невалидном JSON', async () => {
@@ -58,7 +70,10 @@ describe('statusFetch', () => {
     };
     vi.mocked(tauriFetch).mockResolvedValue(mockResponse as any);
 
-    await expect(statusFetch(8080, 'BadJson', {})).rejects.toThrow('Invalid JSON response from BadJson: not a valid json string...');
+    // Фрагмент тела тоже не включается в ошибку.
+    const promise = statusFetch(8080, 'BadJson', {});
+    await expect(promise).rejects.toThrow('Invalid JSON response from BadJson');
+    await expect(promise).rejects.not.toThrow('not a valid json string');
   });
 
   it('должен выбрасывать ошибку, если data.error является строкой', async () => {

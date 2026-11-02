@@ -4,7 +4,7 @@
   import { Wallet, Pencil } from 'lucide-svelte';
   import { walletState } from '$lib/stores/walletStore.svelte';
 
-  let { onManageAccounts }: { onManageAccounts?: () => void } = $props();
+  let { onNavigate }: { onNavigate?: (section: string) => void } = $props();
 </script>
 
 <div class="flex flex-col h-full border-r border-border bg-card">
@@ -37,7 +37,7 @@
 
       <!-- Manage accounts: иконка с карандашом + текст -->
       <button
-        onclick={onManageAccounts}
+        onclick={() => onNavigate?.('profile')}
         class="mt-4 w-full flex items-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors"
         title={i18n.t('Manage accounts')}
       >

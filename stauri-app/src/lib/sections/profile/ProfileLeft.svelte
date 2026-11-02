@@ -113,10 +113,7 @@
         <!-- Красная плашка "Seed не сохранена" -->
         {#if !statusState.isSeedSaved}
           <button
-            onclick={() => {
-            console.log("CreateSeed clicked"); // <-- Проверка
-                                                      onCreateSeed?.();
-                                                      }}
+            onclick={() => onCreateSeed?.()}
                                                       class="w-full p-2 bg-red-100 text-red-700 rounded-md text-xs font-semibold text-center border border-red-300 hover:bg-red-200 transition-colors cursor-pointer"
                                                       >
               ⚠️ {i18n.t('Seed-фраза не сохранена')}

@@ -4,6 +4,7 @@
   import { sendContactRequest } from '$lib/status/api';
   import { statusState } from '$lib/stores/statusStore.svelte';
   import { getDisplayName } from '$lib/utils/user';
+  import { formatError } from '$lib/utils/errors';
 
   // Для перехода в чат
   let { onOpenChat }: { onOpenChat?: (chatId: string) => void } = $props();
@@ -23,7 +24,7 @@
       message = '';
       alert(i18n.t('Contact request sent!'));
     } catch (e: any) {
-      error = e.message;
+      error = formatError(e);
     } finally {
       isSending = false;
     }

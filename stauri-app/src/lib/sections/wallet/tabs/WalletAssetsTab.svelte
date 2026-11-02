@@ -74,6 +74,9 @@
     return `https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/${chainSlug}/assets/${tokenAddress}/logo.png`;
   }
 
+  // Кэш иконок, а не реактивное состояние: обновляется вручную через
+  // scheduleSaveCache() и не участвует в графе реактивности Svelte.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity
   const iconCache = new Map<string, string>();
   if (typeof localStorage !== 'undefined') {
     try {
@@ -136,7 +139,11 @@
   };
 
   const groupedBalances = $derived.by(() => {
+    // Локальные карты пересоздаются на каждый пересчёт $derived.by и в
+    // реактивности не участвуют — SvelteMap здесь не нужен.
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
     const map = new Map<string, Group>();
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity
     const chainToAddress = new Map<string, Map<number, string>>();
 
     for (const token of walletState.balances) {
@@ -208,7 +215,6 @@
         loadIcon(g.fallbackIconUrl);
       }
     }
-    iconCache.size;
   });
 
   function formatGroupBalance(g: Group): string {

@@ -7,26 +7,22 @@
   "Wallet": "Cartera",
   "Market": "Mercado",
   "Settings": "Ajustes",
-
   "Welcome": "Bienvenido",
   "Create a new profile or log in with your recovery phrase.": "Crea un nuevo perfil o inicia sesión con tu frase de recuperación.",
   "Create new profile": "Crear nuevo perfil",
   "Log in by recovery phrase": "Iniciar sesión con frase de recuperación",
   "Select Profile & Log in": "Seleccionar perfil e iniciar sesión",
   "NB: Unlike the official StatusIM client, Stauri allows you to create multiple independent profiles.": "NB: A diferencia del cliente oficial de StatusIM, Stauri te permite crear múltiples perfiles independientes.",
-
   "Select Profile": "Seleccionar perfil",
   "Log In": "Iniciar sesión",
   "Log in by Recovery Phrase": "Iniciar sesión con frase de recuperación",
   "Enter your 12 words in the correct order.": "Ingresa tus 12 palabras en el orden correcto.",
-
   "Show recovery phrase": "Mostrar frase de recuperación",
   "A 12-word phrase that gives full access to your funds. Write it down and store it safely.": "Una frase de 12 palabras que da acceso total a tus fondos. Escríbela y guárdala de forma segura.",
   "Warning: Never share your recovery phrase. Anyone asking for it is trying to scam you.": "Advertencia: Nunca compartas tu frase de recuperación. Cualquiera que te la pida está intentando estafarte.",
   "I've backed up phrase": "He respaldado la frase",
   "Copy": "Copiar",
   "Copied!": "¡Copiado!",
-
   "Create Profile": "Crear perfil",
   "New Password": "Nueva contraseña",
   "Confirm Password": "Confirmar contraseña",
@@ -34,7 +30,6 @@
   "Upload Userpic": "Subir avatar",
   "Password": "Contraseña",
   "Back": "Atrás",
-
   "Connecting...": "Conectando...",
   "Connected (Port: {port})": "Conectado (Puerto: {port})",
   "Disconnect": "Desconectar",
@@ -42,15 +37,12 @@
   "Edit Profile": "Editar perfil",
   "Profile Settings": "Ajustes del perfil",
   "Manage your profile, display name, and avatar here.": "Administra tu perfil, nombre e avatar aquí.",
-
   "Contact Details": "Detalles del contacto",
   "Send Contact Request": "Enviar solicitud de contacto",
   "Enter a public key to connect": "Ingresa una clave pública para conectar",
   "Send Request": "Enviar solicitud",
   "Pending requests and contact info will appear here.": "Las solicitudes pendientes y la información de contacto aparecerán aquí.",
-
   "Welcome to Stauri": "Bienvenido a Stauri",
-
   "General": "General",
   "Language": "Idioma",
   "Theme": "Tema",
@@ -58,7 +50,6 @@
   "Maroon": "Granate",
   "Light": "Claro",
   "Dark": "Oscuro",
-
   "Coming Soon": "Próximamente",
   "This section is under development.": "Esta sección está en desarrollo.",
   "All accounts": "Todas las cuentas",
@@ -74,7 +65,6 @@
   "Send": "Enviar",
   "Buy": "Comprar",
   "Swap": "Intercambiar",
-
   "Token": "Token",
   "Price": "Precio",
   "24hr": "24h",
@@ -84,13 +74,11 @@
   "to": "a",
   "of": "de",
   "results": "resultados",
-
   "Add a new account": "Agregar una nueva cuenta",
   "Name": "Nombre",
   "Account name": "Nombre de la cuenta",
   "Colour": "Color",
   "Add account": "Agregar cuenta",
-
   "Loading market data...": "Cargando datos del mercado...",
   "Loading balances...": "Cargando saldos...",
   "No balances found.": "No se encontraron saldos.",
@@ -117,9 +105,16 @@
   "Seed-фраза не сохранена": "Frase semilla no guardada",
   "tokens": "tokens",
   "RPC error": "Error de RPC",
-  "Chains": "Redes",
-  "Manage accounts": "Administrar cuentas",
   "Log in by sync": "Iniciar sesión por sincronización",
   "Log in with Keycard": "Iniciar sesión con Keycard",
-  "Select a chat": "Selecciona un chat"
+  "Check for updates": "Buscar actualizaciones",
+  "Checking...": "Comprobando...",
+  "Update available": "Actualización disponible",
+  "You are up to date": "Tienes la última versión",
+  "Installing...": "Instalando...",
+  "Restart required": "Reinicio necesario: cierra y vuelve a abrir Stauri",
+  "Retry": "Reintentar",
+  "Install": "Instalar",
+  "Version": "Versión",
+  "Restart": "Reiniciar"
 }

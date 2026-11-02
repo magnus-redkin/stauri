@@ -6,7 +6,7 @@ import { chatsState } from '$lib/stores/chatsStore.svelte';
 
 // Мокаем стор, чтобы не вызывать loadChats
 vi.mock('$lib/stores/chatsStore.svelte', async (importOriginal) => {
-  const actual = await importOriginal();
+  const actual = await importOriginal<typeof import('$lib/stores/chatsStore.svelte')>();
   return {
     ...actual,
     loadChats: vi.fn(),

@@ -7,10 +7,6 @@
     "websocket:default",
     "core:default",
     "core:window:allow-close",
-    "opener:default",
-    "core:webview:allow-create-webview-window",
-    "shell:allow-spawn",
-    "shell:allow-kill",
     {
       "identifier": "http:default",
       "allow": [{ "url": "http://127.0.0.1:*" }]

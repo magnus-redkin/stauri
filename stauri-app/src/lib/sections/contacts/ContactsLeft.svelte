@@ -25,7 +25,7 @@
   <div class="p-4 border-b border-border flex justify-between items-center">
     <span class="font-bold text-lg text-primary">{i18n.t('Contacts')}</span>
     <button onclick={() => selectContact(null)} class="text-muted-foreground hover:text-primary" title={i18n.t('Add Contact')}>
-      + {"Иконка Add Contact"}
+      + Иконка Add Contact
     </button>
   </div>
 

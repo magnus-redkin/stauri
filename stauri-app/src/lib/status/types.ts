@@ -1,5 +1,8 @@
 export interface StartBackendResponse {
+  /** Настоящий порт status-backend. Внутренний, фронтенд его не использует. */
   port: number;
+  /** Порт аутентифицирующего прокси — через него идёт весь трафик. */
+  authPort: number;
   dataDir: string;
   networkName: string;
   chainId: number;

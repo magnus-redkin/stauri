@@ -1,11 +1,25 @@
 import { invoke } from "@tauri-apps/api/core";
+import { debug } from '$lib/utils/log';
+import { INFURA_KEY, STATUS_LOG_LEVEL, STATUS_LOG_FILE } from '$lib/config/keys';
 import { statusFetch } from "./http";
 import type { StartBackendResponse } from "./types";
 
-const ALCHEMY_KEY = import.meta.env.VITE_ALCHEMY_KEY as string | undefined;
-const INFURA_KEY = import.meta.env.VITE_INFURA_KEY as string | undefined;
+debug('[api] INFURA_KEY loaded:', !!INFURA_KEY);
 
-console.log('[api] ALCHEMY_KEY loaded:', !!ALCHEMY_KEY, 'INFURA_KEY loaded:', !!INFURA_KEY);
+/**
+ * Токен аутентифицирующего прокси.
+ *
+ * Кэшируется на время жизни страницы: Rust отдаёт один и тот же токен
+ * всё время работы приложения. Запрашиваем лениво — только когда реально
+ * нужен первый запрос.
+ */
+let authToken: string | null = null;
+
+export async function getAuthToken(): Promise<string> {
+  if (authToken) return authToken;
+  authToken = await invoke<string>('auth_proxy_token');
+  return authToken;
+}
 
 /**
  * Секреты для LoginAccount / CreateAccountAndLogin.
@@ -49,7 +63,7 @@ export async function loginAccount(
     statusProxyStageName: 'prod',
     ...walletSecrets(),
   };
-  console.log('[Login] payload keys:', Object.keys(payload));
+  debug('[Login] payload keys:', Object.keys(payload));
   return await statusFetch(port, "LoginAccount", payload);
 }
 
@@ -64,10 +78,8 @@ export async function loginAccount(
  *
  * Разработчику: задайте VITE_STATUS_LOG=debug (и при необходимости
  * VITE_STATUS_LOG_FILE=/abs/path) в .env — тогда лог включится.
+ * Сами значения читаются в $lib/config/keys.
  */
-const STATUS_LOG_LEVEL = import.meta.env.VITE_STATUS_LOG as string | undefined;
-const STATUS_LOG_FILE = import.meta.env.VITE_STATUS_LOG_FILE as string | undefined;
-
 function loggingConfig(dataDir: string): Record<string, unknown> {
   if (!STATUS_LOG_LEVEL) {
     return { logEnabled: false };
@@ -100,7 +112,7 @@ export async function createAccountAndLogin(
     ...loggingConfig(dataDir),
     ...walletSecrets(),
   };
-  console.log('[CreateAccount] payload keys:', Object.keys(payload));
+  debug('[CreateAccount] payload keys:', Object.keys(payload));
   return await statusFetch(port, "CreateAccountAndLogin", payload);
 }
 
@@ -157,63 +169,17 @@ export async function startMessenger(port: number): Promise<any> {
   });
 }
 
-/** Регистрирует сеть в preferences (fallback). */
-/**
- * Жестко конфигурирует сетевой слой в preferences,
- * используя ваши ключи из .env для полноценного RPC доступа
- */
-
-/**
- * Жестко конфигурирует сетевой слой в preferences,
- * используя импортированные ключи из .env для полноценного RPC доступа
- */
-export async function ensureNetworksConfigured(
-  port: number,
-  networkName: string,
-  rpcUrl: string,
-  chainId: number
-): Promise<void> {
-  const networkId = `${networkName}_rpc`;
-
-  // 🔥 ГЛАВНЫЙ АРХИТЕКТУРНЫЙ ФИКС:
-  // Игнорируем дефолтный публичный линк, прилетевший из Rust.
-  // Если Vite успешно прочитал ALCHEMY_KEY из .env, собираем полноценный Alchemy-эндпоинт!
-  let targetRpcUrl = rpcUrl;
-  if (INFURA_KEY && networkName === 'mainnet') {
-    targetRpcUrl = `https://mainnet.infura.io/v3/${INFURA_KEY}`;
-  } else if (ALCHEMY_KEY && networkName === 'mainnet') {
-    targetRpcUrl = `https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_KEY}`;
-  }
-
-  const maskedUrl = targetRpcUrl.replace(/\/v[23]\/[^/]+$/, '/vX/***');
-  console.log(`[Stauri Network] Injecting RPC URL to preferences (masked): ${maskedUrl}`);
-
-  const networksJson = JSON.stringify([{
-    id: networkId,
-    name: networkName === 'mainnet' ? 'Ethereum Mainnet' : networkName,
-    rpcUrl: targetRpcUrl, // Передаем ноду Alchemy со всеми методами индексации Status
-    chainId,
-    symbol: 'ETH',
-    upstreamConfig: { enabled: true },
-  }]);
-
-  await statusFetch(port, 'CallRPC', {
-    jsonrpc: '2.0', id: 900,
-    method: 'preferences_set',
-    params: ['settings', 'networks/networks', networksJson],
-  });
-  await statusFetch(port, 'CallRPC', {
-    jsonrpc: '2.0', id: 901,
-    method: 'preferences_set',
-    params: ['settings', 'networks/current-network', networkId],
-  });
-  await statusFetch(port, 'CallRPC', {
-    jsonrpc: '2.0', id: 902,
-    method: 'preferences_set',
-    params: ['settings', 'thirdparty_services_enabled', 'true'],
-  });
-}
-
+// ensureNetworksConfigured() удалена.
+//
+// Она жёстко прописывала preferences_set → networks/networks с прямым
+// Infura/Alchemy-эндпоинтом в обход локального RPC-форвардера и осталась
+// без вызовов после того, как configureWalletRpc() в connectionStore взял
+// эту роль на себя. Держать её было опасно: при случайном вызове она
+// возвращала прямой провайдер и обнуляла обход залипающих соединений,
+// ради которого написан src-tauri/src/rpc_proxy.rs.
+//
+// Сети и провайдеры теперь настраиваются только через
+// configureWalletRpc() → setChainUserRpcProvider() → http://127.0.0.1:<port>/<chainId>.
 
 
 export async function startWallet(port: number): Promise<any> {
@@ -378,17 +344,9 @@ export async function acceptContactRequest(port: number, contactPublicKey: strin
   });
 }
 
-export async function getSettingsWithMnemonic(port: number): Promise<string | null> {
-  try {
-    const res = await statusFetch<{ result?: { mnemonic?: string } }>(port, "CallRPC", {
-      jsonrpc: "2.0", id: 1, method: "settings_getSettings", params: []
-    });
-    return res.result?.mnemonic || null;
-  } catch (e) {
-    console.warn("Failed to get mnemonic:", e);
-    return null;
-  }
-}
+// getSettingsWithMnemonic удалён: seed-фраза больше не покидает процесс Rust.
+// Фронтенд работает через команды seed::* (см. src-tauri/src/seed.rs):
+// fetch_seed_phrase, seed_word, seed_challenge, verify_seed_answer, clear_seed.
 
 export async function sendContactRequest(port: number, publicKey: string, message: string = ""): Promise<any> {
   return await statusFetch(port, "CallRPC", {

@@ -5,6 +5,7 @@
   import { statusState } from '$lib/stores/statusStore.svelte';
   import { chatsState, loadChats } from '$lib/stores/chatsStore.svelte';
   import { formatMessageText } from '$lib/utils/user';
+  import { formatError } from '$lib/utils/errors';
   import type { ChatItem } from './ChatLeft.svelte';
 
   let messages = $state<any[]>([]);
@@ -52,7 +53,7 @@
       await acceptContactRequest(statusState.backendPort, chat.id);
       await loadChats(true); // Перезагружаем чаты
     } catch (e: any) {
-      statusState.errorMsg = `Failed to accept request: ${e.message || e}`;
+      statusState.errorMsg = `Failed to accept request: ${formatError(e)}`;
     } finally {
       isAccepting = false;
     }

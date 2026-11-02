@@ -2,6 +2,7 @@
   import { i18n } from '$lib/i18n';
   import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
   import { fetchMarketData, type MarketCoin } from '$lib/status/api';
+  import { formatError } from '$lib/utils/errors';
 
   let coins = $state<MarketCoin[]>([]);
   let isLoading = $state(true);
@@ -13,7 +14,7 @@
     try {
       coins = await fetchMarketData();
     } catch (e: any) {
-      error = e.message || String(e);
+      error = formatError(e);
     } finally {
       isLoading = false;
     }

@@ -1,82 +1,115 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
   import { i18n } from '$lib/i18n';
-  import { statusState } from '$lib/stores/statusStore.svelte';
-  import { getSettingsWithMnemonic } from '$lib/status/api';
+  import { formatError } from '$lib/utils/errors';
 
   let { onBack, onSave }: { onBack: () => void; onSave: () => void } = $props();
 
-  let mnemonic = $state('');
+  let wordCount = $state(0);
   let isLoading = $state(true);
+  let error = $state('');
   let step = $state<1 | 2>(1);
-  let testWords = $state<string[]>([]);
+
+  // Слова запрашиваются по одному через seed_word(index) и хранятся в
+  // shownWords для отображения. Пользователю фразу нужно записать, поэтому
+  // показать её неизбежно; цель этой схемы — не давать фразе покидать
+  // Rust-процесс целиком (в виде одной строки, которую легко утащить)
+  let shownWords = $state<{ index: number; word: string }[]>([]);
+
+  // Индексы и ответы для проверки. Ожидаемые слова в webview не попадают:
+  // сверку делает verify_seed_answer() на стороне Rust.
+  let testIndices = $state<number[]>([]);
   let testAnswers = $state<string[]>(['', '', '', '']);
-  let wordStatus = $state<(boolean | null)[]>([null, null, null, null]); // true = верно, false = неверно, null = пусто
+  let wordStatus = $state<(boolean | null)[]>([null, null, null, null]);
   let inputRefs: HTMLInputElement[] = [];
 
-  // Загрузка мнемоники
-  $effect(() => {
-    if (statusState.backendPort) {
-      getSettingsWithMnemonic(statusState.backendPort).then(m => {
-        if (m) mnemonic = m;
-        isLoading = false;
-      });
+  async function loadWords() {
+    try {
+      const info = await invoke<{ word_count: number }>('fetch_seed_phrase');
+      wordCount = info.word_count;
+
+      const words: { index: number; word: string }[] = [];
+      for (let i = 0; i < wordCount; i++) {
+        words.push({ index: i, word: await invoke<string>('seed_word', { index: i }) });
+      }
+      shownWords = words;
+    } catch (e: any) {
+      error = formatError(e, i18n.t('Failed to load seed phrase'));
+    } finally {
+      isLoading = false;
     }
+  }
+
+  $effect(() => {
+    loadWords();
   });
 
-  const allWords = $derived(mnemonic.split(' ').filter(w => w.length > 0));
+  // Фраза стирается из памяти Rust при уходе с экрана, даже если компонент
+  // размонтирован аварийно (навигация, закрытие окна).
+  onDestroy(() => {
+    shownWords = [];
+    testAnswers = ['', '', '', ''];
+    invoke('clear_seed').catch(() => {});
+  });
 
-  // Проверка: все ли 4 поля верны
-  const allCorrect = $derived(wordStatus.every(s => s === true));
+  const allCorrect = $derived(wordStatus.every((s) => s === true));
 
-  // Копирование всей фразы
   async function copyPhrase() {
-    await navigator.clipboard.writeText(allWords.join(' '));
+    // Собираем текст только на момент копирования, чтобы он не жил
+    // в состоянии компонента.
+    const parts: string[] = [];
+    for (const w of shownWords) parts.push(w.word);
+    await navigator.clipboard.writeText(parts.join(' '));
   }
 
-  function startVerification() {
-    const indices = new Set<number>();
-    while (indices.size < 4) {
-      indices.add(Math.floor(Math.random() * allWords.length));
+  async function startVerification() {
+    try {
+      testIndices = await invoke<number[]>('seed_challenge', { count: 4 });
+      step = 2;
+      setTimeout(() => inputRefs[0]?.focus(), 100);
+    } catch (e: any) {
+      error = formatError(e, i18n.t('Failed to start verification'));
     }
-    testWords = Array.from(indices).map(i => allWords[i]);
-    step = 2;
-    setTimeout(() => inputRefs[0]?.focus(), 100);
   }
 
-  function handleInput(e: Event, index: number) {
+  async function handleInput(e: Event, position: number) {
     const value = (e.target as HTMLInputElement).value;
-    testAnswers[index] = value;
+    testAnswers[position] = value;
 
-    // Проверяем правильность
     if (value.trim() === '') {
-      wordStatus[index] = null;
-    } else {
-      wordStatus[index] = value.trim().toLowerCase() === testWords[index].toLowerCase();
+      wordStatus[position] = null;
+      return;
     }
 
-    // Автопереход только если слово введено полностью (или нажат пробел)
-    const isComplete = value.length >= testWords[index].length;
-    const hasSpace = value.endsWith(' ');
+    // Сверку выполняет Rust: слово-эталон в webview не попадает.
+    try {
+      const res = await invoke<{ correct: boolean }>('verify_seed_answer', {
+        index: testIndices[position],
+        answer: value.trim(),
+      });
+      wordStatus[position] = res.correct;
+    } catch {
+      wordStatus[position] = null;
+      return;
+    }
 
-    if ((isComplete || hasSpace) && index < 3) {
-      inputRefs[index + 1]?.focus();
-      // Если был пробел, можно удалить его из значения (чтобы не мешал проверке)
-      if (hasSpace) {
-        testAnswers[index] = value.trim();
-      }
+    if (value.endsWith(' ') && position < testIndices.length - 1) {
+      inputRefs[position + 1]?.focus();
+      testAnswers[position] = value.trim();
     }
   }
 
   function checkAnswers() {
-    if (allCorrect) {
-      onSave();
-    }
+    if (allCorrect) onSave();
   }
 </script>
 
 <div class="p-8 max-w-2xl mx-auto w-full">
   {#if isLoading}
-    <p>Loading...</p>
+    <p>{i18n.t('Loading')}...</p>
+  {:else if error}
+    <p class="text-destructive">{error}</p>
   {:else if step === 1}
     <div class="flex justify-between items-center mb-4">
       <h2 class="text-2xl font-bold text-primary">{i18n.t('Create Seed Phrase')}</h2>
@@ -93,12 +126,11 @@
       {i18n.t('Write this down and store it safely. This is the only way to recover your account.')}
     </p>
 
-    <!-- 12 слов (цифры не выделяются) -->
     <div class="grid grid-cols-2 gap-2 p-4 bg-secondary/30 rounded-lg w-full max-w-md mb-6">
-      {#each allWords as word, i (i)}
+      {#each shownWords as w (w.index)}
         <div class="flex items-center gap-2">
-          <span class="text-xs text-muted-foreground w-4 text-right select-none">{i + 1}.</span>
-          <span class="font-mono font-medium">{word}</span>
+          <span class="text-xs text-muted-foreground w-4 text-right select-none">{w.index + 1}.</span>
+          <span class="font-mono font-medium">{w.word}</span>
         </div>
       {/each}
     </div>
@@ -112,7 +144,6 @@
     <button onclick={onBack} class="text-sm text-muted-foreground hover:underline">
       {i18n.t('Back')}
     </button>
-
   {:else}
     <h2 class="text-2xl font-bold text-primary mb-4">{i18n.t('Verify Seed Phrase')}</h2>
     <p class="text-sm text-muted-foreground mb-4">
@@ -120,10 +151,10 @@
     </p>
 
     <div class="flex flex-col gap-3 max-w-md mb-6">
-      {#each testWords as word, i (i)}
+      {#each testIndices as wordIndex, i (i)}
         <div class="flex items-center gap-3">
           <span class="text-sm font-mono w-24 text-right text-muted-foreground">
-            {i18n.t('Word')} {allWords.indexOf(word) + 1}:
+            {i18n.t('Word')} {wordIndex + 1}:
           </span>
           <input
             bind:this={inputRefs[i]}

@@ -1,28 +1,55 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
+import { invoke } from '@tauri-apps/api/core';
+import { debug } from '$lib/utils/log';
+
+/**
+ * Клиент status-go RPC.
+ *
+ * Тела запросов и ответов НЕ логируются. Раньше здесь печатались первые
+ * 200 символов ответа — а `settings_getSettings` возвращает seed-фразу
+ * в поле `mnemonic`, то есть фраза уходила в консоль webview при каждом
+ * открытии экрана с ней.
+ *
+ * Осталось логирование только имён методов и, при ошибке, кода статуса.
+ *
+ * `port` — порт АУТЕНТИФИЦИРУЮЩЕГО ПРОКСИ, а не бэкенда. Прокси требует
+ * заголовок с токеном и только после проверки пересылает запрос дальше.
+ */
+
+/** Токен прокси. Кэш на время жизни страницы. */
+let authToken: string | null = null;
+
+async function token(): Promise<string> {
+  if (authToken) return authToken;
+  authToken = await invoke<string>('auth_proxy_token');
+  return authToken;
+}
 
 export async function statusFetch<T>(port: number, endpoint: string, body: any): Promise<T> {
   const url = `http://127.0.0.1:${port}/statusgo/${endpoint}`;
 
-  // Лог: что отправляем (без секретов)
-  const safeBody = { ...body };
-  if (safeBody.password) safeBody.password = '***';
-  console.log(`[statusFetch] → POST ${endpoint}`, 'keys:', Object.keys(body || {}), 'body:', JSON.stringify(safeBody).slice(0, 300));
+  debug(`[statusFetch] → ${endpoint} keys=${Object.keys(body || {}).join(',')}`);
 
   const response = await tauriFetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Stauri-Token': await token(),
+    },
     body: JSON.stringify(body)
   });
 
-  // 1. Проверка HTTP-статуса
+  // 1. Проверка HTTP-статуса.
+  //    Тело ответа не печатаем и не вкладываем в текст ошибки: оно может
+  //    содержать данные профиля. Оставляем только статус и длину.
   if (!response.ok) {
     const errorText = await response.text();
-    console.error(`[statusFetch] ← ${endpoint} HTTP ${response.status}`, errorText.substring(0, 300));
-    throw new Error(`HTTP ${response.status}: ${errorText.substring(0, 200)}`);
+    debug(`[statusFetch] ← ${endpoint} HTTP ${response.status} len=${errorText.length}`);
+    throw new Error(`HTTP ${response.status}`);
   }
 
   const text = await response.text();
-  console.log(`[statusFetch] ← ${endpoint} status=${response.status} len=${text.length}`, text.slice(0, 200));
+  debug(`[statusFetch] ← ${endpoint} status=${response.status} len=${text.length}`);
 
   // 2. Пустой ответ (например, LoginAccount) — это нормально
   if (!text || text.trim() === '') {
@@ -34,7 +61,7 @@ export async function statusFetch<T>(port: number, endpoint: string, body: any):
   try {
     data = JSON.parse(text);
   } catch (e) {
-    throw new Error(`Invalid JSON response from ${endpoint}: ${text.substring(0, 100)}...`, { cause: e });
+    throw new Error(`Invalid JSON response from ${endpoint}`, { cause: e });
   }
 
   // 4. Обработка ошибок (единый блок для JSON-RPC и обычного API)
@@ -49,7 +76,7 @@ export async function statusFetch<T>(port: number, endpoint: string, body: any):
       errorMessage = JSON.stringify(data.error);
     }
 
-    console.error(`[statusFetch] ← ${endpoint} error:`, errorMessage);
+    debug(`[statusFetch] ← ${endpoint} error`);
     throw new Error(errorMessage);
   }
 

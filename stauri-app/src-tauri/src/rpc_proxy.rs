@@ -12,12 +12,14 @@
 //! `pool_max_idle_per_host(0)`) — ровно так ведёт себя curl, который
 //! в тех же условиях работает.
 
+use crate::error::{AppError, AppResult};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
+use tracing::{debug, error, info};
 
 /// Максимальный размер заголовков и тела входящего запроса.
 const MAX_HEADER_BYTES: usize = 64 * 1024;
@@ -50,37 +52,54 @@ impl RpcProxyState {
     }
 }
 
-/// Запускает форвардер на свободном порту с картой chainId -> upstream.
+/// Запускает форвардер с картой chainId -> upstream.
+///
 /// Повторный вызов возвращает уже занятый порт, второй слушатель не
 /// поднимается, но карта upstream-ов обновляется.
-pub async fn start(
+///
+/// ## Почему порт не должен меняться молча
+///
+/// URL провайдера (`http://127.0.0.1:<port>/<chain>`) сохраняется в БД
+/// status-go и переживает перезапуск приложения. Если при старте занять
+/// вместо него случайный порт:
+///
+/// * клиент, собранный при инициализации ноды, смотрит на `<port>` и будет
+///   получать ответы от **чужого** процесса, если тот его слушает, —
+///   запросы уходят в неизвестное место;
+/// * либо получает отказ от чужого процесса и выглядит как «провайдер мёртв».
+///
+/// Поэтому порт фиксирован: занят — возвращаем ошибку с объяснением.
+/// Вызывающая сторона сама решает, что делать, а не получает втихую
+/// нерабочую конфигурацию.
+pub async fn start(state: &RpcProxyState, upstreams: HashMap<u64, String>) -> AppResult<u16> {
+    start_on(state, upstreams, PREFERRED_PORT).await
+}
+
+/// Запуск на заданном порту. `0` — любой свободный.
+///
+/// Отдельно от [`start`], чтобы тесты не дрались за production-порт:
+/// два теста `#[tokio::test]` идут параллельно и оба биндили бы 43057.
+pub async fn start_on(
     state: &RpcProxyState,
     upstreams: HashMap<u64, String>,
-) -> Result<u16, String> {
+    preferred: u16,
+) -> AppResult<u16> {
     if let Some(port) = state.port() {
         set_upstreams(state, upstreams);
         return Ok(port);
     }
 
-    // Сначала постоянный порт — на него уже может указывать провайдер,
-    // сохранённый в БД предыдущим запуском. Если он занят (например, старый
-    // экземпляр приложения ещё жив), берём любой свободный: лучше работать
-    // на новом порту, чем не работать вовсе, — провайдеры перепишутся.
-    let listener = match TcpListener::bind(("127.0.0.1", PREFERRED_PORT)).await {
-        Ok(l) => l,
-        Err(e) => {
-            eprintln!(
-                "[rpc-proxy] port {} busy ({}), falling back to a random one",
-                PREFERRED_PORT, e
-            );
-            TcpListener::bind("127.0.0.1:0")
-                .await
-                .map_err(|e| format!("rpc proxy bind failed: {}", e))?
-        }
-    };
+    let listener = TcpListener::bind(("127.0.0.1", preferred))
+        .await
+        .map_err(|e| {
+            AppError::internal(format!(
+                "RPC-провайдеры указывают на 127.0.0.1:{preferred}, но этот порт занят ({e}). \
+                 Скорее всего работает другая копия Stauri — закройте её и перезапустите приложение."
+            ))
+        })?;
     let port = listener
         .local_addr()
-        .map_err(|e| format!("rpc proxy local_addr failed: {}", e))?
+        .map_err(|e| AppError::internal(format!("rpc proxy local_addr failed: {e}")))?
         .port();
 
     let shared: Upstreams = Arc::new(Mutex::new(upstreams));
@@ -91,7 +110,7 @@ pub async fn start(
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(60))
         .build()
-        .map_err(|e| format!("rpc proxy client failed: {}", e))?;
+        .map_err(|e| AppError::internal(format!("rpc proxy client failed: {e}")))?;
 
     let task = tokio::spawn(accept_loop(listener, client, shared.clone()));
 
@@ -103,16 +122,16 @@ pub async fn start(
         });
     }
 
-    println!("[rpc-proxy] listening on 127.0.0.1:{}", port);
+    info!(port, "rpc proxy listening");
     Ok(port)
 }
 
 pub fn stop(state: &RpcProxyState) {
-    if let Ok(mut guard) = state.handle.lock() {
-        if let Some(handle) = guard.take() {
-            handle.task.abort();
-            println!("[rpc-proxy] stopped (port {})", handle.port);
-        }
+    if let Ok(mut guard) = state.handle.lock()
+        && let Some(handle) = guard.take()
+    {
+        handle.task.abort();
+        info!(port = handle.port, "rpc proxy stopped");
     }
 }
 
@@ -121,10 +140,10 @@ pub fn set_upstreams(state: &RpcProxyState, map: HashMap<u64, String>) {
         Ok(g) => g,
         Err(_) => return,
     };
-    if let Some(handle) = guard.as_ref() {
-        if let Ok(mut target) = handle.upstreams.lock() {
-            *target = map;
-        }
+    if let Some(handle) = guard.as_ref()
+        && let Ok(mut target) = handle.upstreams.lock()
+    {
+        *target = map;
     }
 }
 
@@ -133,7 +152,7 @@ async fn accept_loop(listener: TcpListener, client: reqwest::Client, upstreams: 
         let (stream, _) = match listener.accept().await {
             Ok(pair) => pair,
             Err(e) => {
-                eprintln!("[rpc-proxy] accept failed: {}", e);
+                error!(error = %e, "rpc proxy accept failed");
                 continue;
             }
         };
@@ -141,7 +160,7 @@ async fn accept_loop(listener: TcpListener, client: reqwest::Client, upstreams: 
         let upstreams = upstreams.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_conn(stream, client, upstreams).await {
-                eprintln!("[rpc-proxy] request failed: {}", e);
+                debug!(kind = ?e.kind, message = %e.message, "rpc proxy request failed");
             }
         });
     }
@@ -151,7 +170,7 @@ async fn handle_conn(
     mut stream: TcpStream,
     client: reqwest::Client,
     upstreams: Upstreams,
-) -> Result<(), String> {
+) -> AppResult<()> {
     let (request_line, _headers, body) = read_request(&mut stream).await?;
 
     let path = request_line.split_whitespace().nth(1).unwrap_or("/");
@@ -161,10 +180,10 @@ async fn handle_conn(
         .next()
         .unwrap_or("")
         .parse()
-        .map_err(|_| format!("bad chain id in path: {}", path))?;
+        .map_err(|_| AppError::internal(format!("bad chain id in path: {path}")))?;
 
     let upstream = {
-        let guard = upstreams.lock().map_err(|_| "upstreams poisoned")?;
+        let guard = upstreams.lock().map_err(|_| AppError::poisoned())?;
         guard.get(&chain_id).cloned()
     };
     let Some(upstream) = upstream else {
@@ -195,7 +214,7 @@ async fn handle_conn(
     let bytes = response
         .bytes()
         .await
-        .map_err(|e| format!("upstream body read failed: {}", e))?;
+        .map_err(|e| AppError::network(format!("upstream body read failed: {e}")))?;
 
     let head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -206,14 +225,17 @@ async fn handle_conn(
     stream
         .write_all(head.as_bytes())
         .await
-        .map_err(|e| e.to_string())?;
-    stream.write_all(&bytes).await.map_err(|e| e.to_string())?;
+        .map_err(|e| AppError::io(e.to_string()))?;
+    stream
+        .write_all(&bytes)
+        .await
+        .map_err(|e| AppError::io(e.to_string()))?;
     let _ = stream.shutdown().await;
     Ok(())
 }
 
 /// Отдаёт JSON-тело с указанным статусом и закрывает соединение.
-async fn write_json(stream: &mut TcpStream, status: u16, body: &[u8]) -> Result<(), String> {
+async fn write_json(stream: &mut TcpStream, status: u16, body: &[u8]) -> AppResult<()> {
     let head = format!(
         "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         status,
@@ -223,8 +245,11 @@ async fn write_json(stream: &mut TcpStream, status: u16, body: &[u8]) -> Result<
     stream
         .write_all(head.as_bytes())
         .await
-        .map_err(|e| e.to_string())?;
-    stream.write_all(body).await.map_err(|e| e.to_string())?;
+        .map_err(|e| AppError::io(e.to_string()))?;
+    stream
+        .write_all(body)
+        .await
+        .map_err(|e| AppError::io(e.to_string()))?;
     let _ = stream.shutdown().await;
     Ok(())
 }
@@ -232,7 +257,7 @@ async fn write_json(stream: &mut TcpStream, status: u16, body: &[u8]) -> Result<
 /// Читает запрос целиком: строку запроса, заголовки и тело по Content-Length.
 async fn read_request(
     stream: &mut TcpStream,
-) -> Result<(String, HashMap<String, String>, Vec<u8>), String> {
+) -> AppResult<(String, HashMap<String, String>, Vec<u8>)> {
     let mut buf = Vec::with_capacity(8192);
     let mut chunk = [0u8; 4096];
 
@@ -241,11 +266,14 @@ async fn read_request(
             break pos + 4;
         }
         if buf.len() > MAX_HEADER_BYTES {
-            return Err("headers too large".into());
+            return Err(AppError::internal("headers too large"));
         }
-        let n = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
+        let n = stream
+            .read(&mut chunk)
+            .await
+            .map_err(|e| AppError::io(e.to_string()))?;
         if n == 0 {
-            return Err("connection closed before headers".into());
+            return Err(AppError::internal("connection closed before headers"));
         }
         buf.extend_from_slice(&chunk[..n]);
     };
@@ -269,14 +297,17 @@ async fn read_request(
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     if content_length > MAX_BODY_BYTES {
-        return Err("body too large".into());
+        return Err(AppError::internal("body too large"));
     }
 
     let mut body = buf[header_end..].to_vec();
     while body.len() < content_length {
-        let n = stream.read(&mut chunk).await.map_err(|e| e.to_string())?;
+        let n = stream
+            .read(&mut chunk)
+            .await
+            .map_err(|e| AppError::io(e.to_string()))?;
         if n == 0 {
-            return Err("connection closed before body".into());
+            return Err(AppError::internal("connection closed before body"));
         }
         body.extend_from_slice(&chunk[..n]);
     }
@@ -285,7 +316,7 @@ async fn read_request(
     Ok((request_line, headers, body))
 }
 
-async fn write_plain(stream: &mut TcpStream, code: u16, message: &str) -> Result<(), String> {
+async fn write_plain(stream: &mut TcpStream, code: u16, message: &str) -> AppResult<()> {
     let body = format!(
         "{{\"jsonrpc\":\"2.0\",\"error\":{{\"code\":-32603,\"message\":\"{}\"}}}}",
         message
@@ -299,11 +330,11 @@ async fn write_plain(stream: &mut TcpStream, code: u16, message: &str) -> Result
     stream
         .write_all(head.as_bytes())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| AppError::io(e.to_string()))?;
     stream
         .write_all(body.as_bytes())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| AppError::io(e.to_string()))?;
     let _ = stream.shutdown().await;
     Ok(())
 }
@@ -341,7 +372,9 @@ mod tests {
         let state = RpcProxyState::default();
         let mut map = HashMap::new();
         map.insert(1u64, "https://ethereum-rpc.publicnode.com".to_string());
-        let port = start(&state, map).await.expect("proxy should start");
+        let port = start_on(&state, map, 0)
+            .await
+            .expect("proxy should start on any free port");
 
         let client = reqwest::Client::new();
         let resp = client
@@ -356,7 +389,11 @@ mod tests {
         let text = resp.text().await.expect("body text");
         let body: serde_json::Value = serde_json::from_str(&text).expect("json body");
         let result = body.get("result").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(result.starts_with("0x"), "expected hex block number, got: {}", body);
+        assert!(
+            result.starts_with("0x"),
+            "expected hex block number, got: {}",
+            body
+        );
 
         stop(&state);
     }
@@ -365,7 +402,9 @@ mod tests {
     #[tokio::test]
     async fn unknown_chain_returns_503() {
         let state = RpcProxyState::default();
-        let port = start(&state, HashMap::new()).await.expect("proxy should start");
+        let port = start_on(&state, HashMap::new(), 0)
+            .await
+            .expect("proxy should start on any free port");
 
         let client = reqwest::Client::new();
         let resp = client

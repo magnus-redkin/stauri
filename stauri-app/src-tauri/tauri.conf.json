@@ -28,7 +28,7 @@
       "endpoints": [
         "https://github.com/magnus-redkin/stauri/releases/latest/download/latest.json"
       ],
-      "pubkey": ""
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZCRTY5NjgzMDcxQzc4OEUKUldTT2VCd0hnNWJtYTRiYkN0UW5HVXVlTHNRMlNHYVZWMU5aU3RsczN3QTFKdXFKVDRZQ2l0ZDQK"
     }
   },
   "bundle": {

@@ -93,22 +93,54 @@ if [[ ${#MISSING_TOOLS[@]} -gt 0 ]]; then
   echo "  WARNING: missing tools, checks will be skipped: ${MISSING_TOOLS[*]}" >&2
 fi
 
-# Подпись — необязательна, но предупреждать надо громко: неподписанный
-# релиз нельзя проверить на стороне пользователя.
+# Подпись и обновления обязательны.
+#
+# Раньше отсутствие ключа или пароля давало предупреждение, и релиз собирался
+# без подписи. Практика показала, чем это кончается: AppImage выглядит
+# готовым, но `check_for_update` в нём навсегда возвращает «обновлений нет»,
+# и пользователи остаются на версии без возможности обновиться. Поэтому
+# теперь это ошибка, а не предупреждение: собранный без подписи артефакт
+# нельзя пускать в раздачу, и лучше упасть до трёхминутной сборки, чем после.
 SIGN_KEY="${TAURI_SIGNING_PRIVATE_KEY_PATH:-}"
 if [[ -z "$SIGN_KEY" && -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
   SIGN_KEY="<TAURI_SIGNING_PRIVATE_KEY>"
 fi
 if [[ -z "$SIGN_KEY" ]]; then
-  echo "  WARNING: TAURI_SIGNING_PRIVATE_KEY[_PATH] не задан — AppImage будет без подписи." >&2
-  echo "           Сгенерировать ключ: pnpm tauri signer generate -w ~/.tauri/stauri.key" >&2
-else
-  if [[ "$SIGN_KEY" != "<TAURI_SIGNING_PRIVATE_KEY>" && ! -f "$SIGN_KEY" ]]; then
-    echo "ERROR: ключ подписи не найден: $SIGN_KEY" >&2
-    exit 1
-  fi
-  echo "  signing key: ${SIGN_KEY}"
+  echo "ERROR: TAURI_SIGNING_PRIVATE_KEY_PATH не задан — без ключа нет ни подписи," >&2
+  echo "       ни обновлений. Такой AppImage публиковать нельзя." >&2
+  echo "       export TAURI_SIGNING_PRIVATE_KEY_PATH=~/.tauri/stauri.key" >&2
+  exit 1
 fi
+if [[ "$SIGN_KEY" != "<TAURI_SIGNING_PRIVATE_KEY>" && ! -f "$SIGN_KEY" ]]; then
+  echo "ERROR: ключ подписи не найден: $SIGN_KEY" >&2
+  exit 1
+fi
+echo "  signing key: ${SIGN_KEY}"
+
+# Пароль тоже обязателен. Сам по себе факт его наличия не гарантирует
+# правильность — это выяснится на подписи, — но его отсутствие гарантирует
+# провал, и узнать об этом сейчас дешевле, чем после сборки.
+if [[ -z "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" ]]; then
+  echo "ERROR: TAURI_SIGNING_PRIVATE_KEY_PASSWORD не задан — подпись не создастся." >&2
+  echo "       export TAURI_SIGNING_PRIVATE_KEY_PASSWORD='...'" >&2
+  exit 1
+fi
+echo "  signing password: set"
+
+# Публичный ключ обязан быть в конфиге заранее: он инлайнится в бинарник при
+# компиляции, и добавить его после сборки нельзя. Пустой ключ = сборка без
+# обновлений, поэтому проверяем до компиляции, а не после.
+CONFIG_PUBKEY="$(python3 -c "
+import json
+print(json.load(open('$ROOT/src-tauri/tauri.conf.json'))['plugins']['updater']['pubkey'].strip())
+")"
+if [[ -z "$CONFIG_PUBKEY" ]]; then
+  echo "ERROR: plugins.updater.pubkey пуст в tauri.conf.json." >&2
+  echo "       Впишите публичную часть ключа (> $SIGN_KEY.pub):" >&2
+  echo "       без неё updater не сможет проверить подпись обновления." >&2
+  exit 1
+fi
+echo "  updater pubkey: ${#CONFIG_PUBKEY} chars"
 
 if [[ ! -f "$ROOT/src-tauri/binaries/libsds.so" ]]; then
   echo "ERROR: src-tauri/binaries/libsds.so not found." >&2
@@ -169,7 +201,7 @@ PY
 
 # AppStream: самый свежий <release> должен совпадать с версией сборки, иначе
 # центры установки показывают неверную.
-python3 - "$ROOT/src-tauri/metainfo/com.magnus.stauri-app.metainfo.xml" "$VERSION" "$(date +%Y-%m-%d)" <<'PY'
+python3 - "$ROOT/src-tauri/metainfo/com.magnus.stauri-app.appdata.xml" "$VERSION" "$(date +%Y-%m-%d)" <<'PY'
 import re, sys
 path, version, today = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(path, encoding='utf-8').read()
@@ -183,14 +215,14 @@ PY
 echo "  package.json     -> $VERSION"
 echo "  tauri.conf.json  -> $VERSION"
 echo "  Cargo.toml       -> $VERSION"
-echo "  metainfo.xml     -> $VERSION"
+echo "  appdata.xml      -> $VERSION"
 
 # ---------- 2a. Проверки перед сборкой ----------
 echo
 echo "[2a/8] Pre-build checks"
 
 # AppStream и .desktop можно проверить до сборки: файлы статические.
-METAINFO="$ROOT/src-tauri/metainfo/com.magnus.stauri-app.metainfo.xml"
+METAINFO="$ROOT/src-tauri/metainfo/com.magnus.stauri-app.appdata.xml"
 if [[ -f "$METAINFO" && -n "$(command -v appstreamcli || true)" ]]; then
   appstreamcli validate --no-net "$METAINFO" 2>&1 | sed 's/^/  /'
   # appstreamcli возвращает 0 и на info-замечаниях, ненулевой — только ошибки.
@@ -318,10 +350,17 @@ echo "  no /nix/store in dynamic section"
 
 # .desktop
 #
-# Пути и имена должны совпадать с metainfo: `<launchable>stauri-app.desktop`
-# и `<id>` = identifier из tauri.conf.json. Иконка ставится по имени
-# `stauri-app`, без пути — иначе в меню будет пустой квадрат.
-cat > "$APPDIR/usr/share/applications/stauri-app.desktop" << 'EOF'
+# Имя файла — обратный DNS, равный Tauri `identifier`. Это не вкусовщина:
+# `appimagetool` ищет метаданные AppStream по имени desktop-файла
+# (`<имя>.appdata.xml`), а `appstreamcli validate-tree` требует, чтобы
+# `<launchable>` ссылался на существующий desktop-id. Пока имя было
+# `stauri-app.desktop`, а `<id>` — `com.magnus.stauri-app`, проверки
+# падали с `metainfo-filename-cid-mismatch` и `desktop-file-not-found`,
+# и linuxdeploy отказывался собирать образ.
+#
+# Иконка ставится по имени `stauri-app`, без пути: так её ищет менеджер окон.
+DESKTOP_ID="com.magnus.stauri-app"
+cat > "$APPDIR/usr/share/applications/$DESKTOP_ID.desktop" << 'EOF'
 [Desktop Entry]
 Type=Application
 Name=Stauri
@@ -336,10 +375,10 @@ StartupWMClass=stauri-app
 EOF
 
 if [[ -n "$(command -v desktop-file-validate || true)" ]]; then
-  if desktop-file-validate "$APPDIR/usr/share/applications/stauri-app.desktop" 2>&1 | sed 's/^/  /'; then
+  if desktop-file-validate "$APPDIR/usr/share/applications/$DESKTOP_ID.desktop" 2>&1 | sed 's/^/  /'; then
     echo "  ✓ desktop entry valid"
   else
-    echo "ERROR: desktop-file-validate нашёл ошибки в stauri-app.desktop" >&2
+    echo "ERROR: desktop-file-validate нашёл ошибки в $DESKTOP_ID.desktop" >&2
     exit 1
   fi
 else
@@ -347,10 +386,16 @@ else
 fi
 
 # AppStream: кладём в usr/share/metainfo/ под именем, равным <id>.
+#
+# Суффикс обязан быть `.appdata.xml`, а имя — совпадать с component id.
+# `linuxdeploy-plugin-appimage` вызывает `appstreamcli validate-tree`, и при
+# суффиксе `.metainfo.xml` тот не находит файл вовсе (`dir-no-metadata-found`),
+# а при несовпадении имени и id падает с `metainfo-filename-cid-mismatch`,
+# из-за чего плагин прерывает сборку образа.
 if [[ -f "$METAINFO" ]]; then
   mkdir -p "$APPDIR/usr/share/metainfo"
   cp "$METAINFO" "$APPDIR/usr/share/metainfo/$(basename "$METAINFO")"
-  echo "  metainfo: installed"
+  echo "  metainfo: installed as $(basename "$METAINFO")"
 fi
 
 # Лицензия: каталоги (Flathub, AppImageHub) и GPL-линтеры требуют, чтобы текст
@@ -539,6 +584,33 @@ fi
 # совпадать с тем, что реально положено в релиз. signature — содержимое
 # .sig одной строкой, как его ждёт плагин.
 MANIFEST_FILE="$(dirname "$APPIMAGE_PATH")/latest.json"
+
+# Сверка ключа в собранном бинарнике.
+#
+# Это ровно тот промах, который случился на релизе 0.2.0: подпись и
+# latest.json создались, но в tauri.conf.json на момент сборки pubkey был
+# пуст. Внешне релиз выглядел готовым, а обновления в нём не работали бы
+# вовсе — `check_for_update` вернул бы None навсегда.
+#
+# Ключ инлайнится в бинарник как строка, поэтому его достаточно найти в нём.
+# Проверяем только когда ключ задан: иначе такого требования нет.
+CONFIG_PUBKEY="$(python3 -c "
+import json
+print(json.load(open('$ROOT/src-tauri/tauri.conf.json'))['plugins']['updater']['pubkey'].strip())
+")"
+if [[ -n "$CONFIG_PUBKEY" ]]; then
+  if grep -qaF "$CONFIG_PUBKEY" "$TAURI_BIN"; then
+    echo "  ✓ updater pubkey is embedded in the binary"
+  else
+    echo "ERROR: в собранном бинарнике нет pubkey из tauri.conf.json." >&2
+    echo "       Ключ был добавлен после сборки — пересоберите приложение," >&2
+    echo "       иначе проверка обновлений всегда будет возвращать «нет обновлений»." >&2
+    exit 1
+  fi
+else
+  echo "  WARNING: plugins.updater.pubkey пуст — обновления в этой сборке" >&2
+  echo "           работать не будут, даже если подпись создана." >&2
+fi
 if [[ -n "$SIGN_KEY" && -f "${APPIMAGE_PATH}.sig" ]]; then
   DOWNLOAD_URL="https://github.com/magnus-redkin/stauri/releases/download/v$VERSION/$(basename "$APPIMAGE_PATH")"
   python3 - "$MANIFEST_FILE" "$VERSION" "$DOWNLOAD_URL" "${APPIMAGE_PATH}.sig" <<'PY'

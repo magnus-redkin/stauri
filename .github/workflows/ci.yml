@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  push:
+    branches: [master, 'refactor/**']
+  pull_request:
+    branches: [master]
+
+# Отменяем предыдущий прогон для той же ветки: Rust-сборка долгая,
+# нет смысла гонять устаревший коммит.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+# Приложение живёт в подкаталоге stauri-app, поэтому у всех шагов
+# проставлен working-directory. Корень репозитория — только .github/.
+defaults:
+  run:
+    working-directory: stauri-app
+
+jobs:
+  frontend:
+    name: Frontend (check, lint, test, build)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: stauri-app/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # svelte-check требует сгенерированные типы SvelteKit (.svelte-kit/),
+      # их создаёт svelte-kit sync — он уже включён в script "check".
+      - name: Type check
+        run: pnpm check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Unit tests
+        run: pnpm test
+
+      # Сборка проверяет, что production-бандл собирается и что CSP-хеш
+      # инлайн-скрипта сходится (SvelteKit падает, если это не так).
+      - name: Build
+        run: pnpm build
+
+      # Метаданные AppStream ломаются тихо: неверный XML или расхождение
+      # <id> с Tauri identifier всплывают только при публикации в каталог.
+      # appstreamcli возвращает 0 на info-замечаниях, ненулевой — на ошибках.
+      - name: Validate AppStream metadata
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends appstream
+          appstreamcli validate --no-net \
+            src-tauri/metainfo/com.magnus.stauri-app.appdata.xml
+
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: stauri-app/src-tauri
+
+      # Системные зависимости Tauri 2 (webkit2gtk-4.1, gtk3, libsoup3 и т.д.)
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            patchelf
+
+      # sidecar и libsds.so — артефакты Nix-сборки, в CI их нет.
+      # Создаём пустышки, чтобы tauri-build не падал на внешнем бинарнике:
+      # для cargo test настоящие бинарники не нужны.
+      - name: Stub sidecar binaries
+        run: |
+          mkdir -p src-tauri/binaries
+          touch src-tauri/binaries/status-backend-x86_64-unknown-linux-gnu
+          touch src-tauri/binaries/libsds.so
+
+      - name: Format check
+        working-directory: stauri-app/src-tauri
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: stauri-app/src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        working-directory: stauri-app/src-tauri
+        run: cargo test

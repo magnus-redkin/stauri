@@ -144,6 +144,19 @@ export async function startRpcProxy(upstreams: Record<number, string> = {}): Pro
   return await invoke<number>('start_rpc_proxy', { upstreams });
 }
 
+/**
+ * Секрет пути форвардера.
+ *
+ * В форвардер ходит `status-go`, а не наш фронтенд, поэтому защита живёт в
+ * самом URL: `http://127.0.0.1:<port>/<секрет>/<chainId>`. Заголовок нода
+ * послать не может.
+ *
+ * `null` — форвардер ещё не запущен.
+ */
+export async function getRpcProxySecret(): Promise<string | null> {
+  return await invoke<string | null>('rpc_proxy_secret');
+}
+
 /** Задаёт upstream-URL для каждой сети: map chainId -> URL провайдера. */
 export async function setRpcUpstreams(upstreams: Record<number, string>): Promise<void> {
   await invoke('set_rpc_upstreams', { upstreams });
@@ -182,125 +195,53 @@ export async function startMessenger(port: number): Promise<any> {
 // configureWalletRpc() → setChainUserRpcProvider() → http://127.0.0.1:<port>/<chainId>.
 
 
-export async function startWallet(port: number): Promise<any> {
-  return await statusFetch(port, "CallRPC", {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "wallet_startWallet",
-    params: []
-  });
-}
-
-export async function getBalances(port: number, addresses: string[], forceRefresh = false): Promise<any> {
-  return await statusFetch(port, "CallRPC", {
-    jsonrpc: "2.0",
-    id: 2,
-    method: "wallet_fetchOrGetCachedWalletBalances",
-    params: [addresses, forceRefresh]
-  });
-}
-
-/**
- * Аккаунты профиля.
- *
- * Нужны, чтобы узнать адреса, по которым бэкенд реально считает балансы:
- * контроллер берёт их из keypairs_accounts с фильтром chat = 0 (см.
- * internal/db/multiaccounts/accounts/database.go, GetWalletAddresses).
- * Поле chat=true — это адрес для чатов, у него нет кошелька.
- */
-export async function getAccounts(port: number): Promise<any[]> {
-  const res = await statusFetch<{ result?: any[] }>(port, "CallRPC", {
-    jsonrpc: "2.0",
-    id: 5,
-    method: "accounts_getAccounts",
-    params: []
-  });
-  return res.result || [];
-}
-
-export async function getSettings(port: number): Promise<any> {
-  return await statusFetch(port, "CallRPC", {
-    jsonrpc: "2.0",
-    id: 3,
-    method: "settings_getSettings",
-    params: []
-  });
-}
+// ==========================================
+// КОШЕЛЁК И ENS
+// ==========================================
+//
+// Обёртки `wallet_*`, `ens_*` и настройки RPC-провайдеров переехали в
+// `wallet.ts`: кошелёк — отдельная граница status-go, и держать её в одном
+// месте нужно, чтобы при переходе на Logos менять было нечего, кроме этого
+// файла. Здесь — только реэкспорт для существующих вызовов; новому коду
+// следует импортировать напрямую из `$lib/status/wallet`.
+export {
+  startWallet,
+  getBalances,
+  getAccounts,
+  getSettings,
+  getTokensForActiveNetworksMode,
+  getAddressDetails,
+  buildTransaction,
+  signMessage,
+  sendTransactionWithSignature,
+  getPendingTransactions,
+  getSuggestedFees,
+  getCryptoOnRamps,
+  getCryptoOnRampUrl,
+  getFlatEthereumChains,
+  setChainUserRpcProvider,
+  getEnsUsernames,
+  ensGetName,
+  ensAddressOf,
+  ensPrice,
+  ensExpireAt,
+} from './wallet';
 
 /**
- * Метаданные токенов (symbol, decimals, name) для активных сетей.
+ * Выход из аккаунта.
  *
- * StorageToken из wallet_fetchOrGetCachedWalletBalances НЕ содержит symbol и
- * decimals — только адрес, chainId, rawBalance и hasError. Без этого вызова
- * баланс невозможно ни подписать, ни перевести в человеческие единицы.
- */
-export async function getTokensForActiveNetworksMode(port: number): Promise<any[]> {
-  const res = await statusFetch<{ result?: any[] }>(port, "CallRPC", {
-    jsonrpc: "2.0",
-    id: 4,
-    method: "wallet_getTokensForActiveNetworksMode",
-    params: []
-  });
-  return res.result || [];
-}
-
-/**
- * Список сетей, известных бэкенду, с их RPC-провайдерами.
- * Используется для диагностики: какие провайдеры включены и живы.
- */
-export async function getFlatEthereumChains(port: number): Promise<any[]> {
-  const res = await statusFetch<{ result?: any[] }>(port, "CallRPC", {
-    jsonrpc: "2.0",
-    id: 5,
-    method: "networks_getFlatEthereumChains",
-    params: []
-  });
-  return res.result || [];
-}
-
-/**
- * Добавляет пользовательский RPC-провайдер к сети.
+ * НЕ `wakuext_logout`: такого метода в этой ветке status-go нет, вызов
+ * отвечал «the method wakuext_logout does not exist/is not available».
+ * Выход — отдельный эндпоинт `/statusgo/Logout`, зарегистрированный в
+ * `EndpointsWithoutRequest` (cmd/status-backend/server/endpoints.go), то есть
+ * обработчик тела не читает и его можно не передавать.
  *
- * Встроенные провайдеры status-go (direct-grove) больше не резолвятся,
- * а direct-infura упирается в таймаут — в итоге все балансы приходят с
- * hasError=true. Свой проверенный endpoint (Alchemy/Infura) чинит это.
- *
- * Бэкенд дописывает user-провайдеров рядом со встроенными и использует их
- * первыми, поэтому вызывать это безопасно.
+ * Это же исправление разблокирует перезапуск ноды: `restartNodeForProviders`
+ * вызывал `logout`, получал ошибку и падал, из-за чего вход не завершался и
+ * сообщества с чатами не загружались вовсе.
  */
-export async function setChainUserRpcProvider(
-  port: number,
-  chainId: number,
-  name: string,
-  url: string
-): Promise<any> {
-  return await statusFetch(port, "CallRPC", {
-    jsonrpc: "2.0",
-    id: 6,
-    method: "networks_setChainUserRpcProviders",
-    params: [chainId, [{
-      id: 0,
-      chainId,
-      name,
-      url,
-      enableRpsLimiter: false,
-      type: "user",
-      enabled: true,
-      authType: "no-auth",
-      authLogin: "",
-      authPassword: "",
-      authToken: "",
-    }]]
-  });
-}
-
 export async function logout(port: number): Promise<any> {
-  return await statusFetch(port, "CallRPC", {
-    jsonrpc: "2.0",
-    id: 1,
-    method: "wakuext_logout",
-    params: []
-  });
+  return await statusFetch(port, 'Logout', {});
 }
 
 export async function getAccountsList(port: number, dataDir: string, networkId: number): Promise<any[]> {
@@ -309,51 +250,50 @@ export async function getAccountsList(port: number, dataDir: string, networkId: 
 }
 
 // ==========================================
-// ЧАТЫ
+// ЧАТЫ И СООБЩЕСТВА
 // ==========================================
+//
+// Логика мессенджинга переехала в `messaging.ts` (шаг 15 плана, вариант A):
+// все методы `wakuext_*` живут там, здесь — только реэкспорт ради
+// совместимости существующих вызовов. Новому коду следует импортировать
+// напрямую из `$lib/status/messaging`.
 
-export async function getChats(port: number): Promise<any> {
-  return await statusFetch(port, "CallRPC", {
-    jsonrpc: "2.0", id: 1, method: "wakuext_chats", params: []
-  });
-}
-
-export async function getChatMessages(port: number, chatId: string, limit: number = 20): Promise<any> {
-  return await statusFetch(port, "CallRPC", {
-    jsonrpc: "2.0", id: 2, method: "wakuext_chatMessages", params: [chatId, "", limit]
-  });
-}
-
-export async function sendChatMessage(port: number, chatId: string, text: string): Promise<any> {
-  return await statusFetch(port, "CallRPC", {
-    jsonrpc: "2.0", id: 3, method: "wakuext_sendChatMessage",
-    params: [{ chatId: chatId, text: text, contentType: 1 }]
-  });
-}
-
-export async function getContacts(port: number): Promise<any> {
-  return await statusFetch(port, "CallRPC", {
-    jsonrpc: "2.0", id: 1, method: "wakuext_contacts", params: []
-  });
-}
-
-export async function acceptContactRequest(port: number, contactPublicKey: string): Promise<any> {
-  return await statusFetch(port, "CallRPC", {
-    jsonrpc: "2.0", id: 1, method: "wakuext_acceptLatestContactRequestForContact",
-    params: [{ id: contactPublicKey }]
-  });
-}
-
-// getSettingsWithMnemonic удалён: seed-фраза больше не покидает процесс Rust.
-// Фронтенд работает через команды seed::* (см. src-tauri/src/seed.rs):
-// fetch_seed_phrase, seed_word, seed_challenge, verify_seed_answer, clear_seed.
-
-export async function sendContactRequest(port: number, publicKey: string, message: string = ""): Promise<any> {
-  return await statusFetch(port, "CallRPC", {
-    jsonrpc: "2.0", id: 1, method: "wakuext_sendContactRequest",
-    params: [{ id: publicKey, message: message }]
-  });
-}
+export {
+  getChatPreviews,
+  getChat,
+  getChatMessages,
+  getJoinedCommunities,
+  getCommunities,
+  getSpectatedCommunities,
+  getCuratedCommunities,
+  fetchCommunity,
+  joinCommunity,
+  leaveCommunity,
+  joinPublicChat,
+  normalizeHex,
+  normalizeChatId,
+  communityIdFromInvite,
+  communityChannels,
+  communityChatId,
+  channelIdFromInvite,
+  communityAccess,
+  checkPermissionsToJoinCommunity,
+  generateJoiningRequestsForSigning,
+  signJoinRequestData,
+  requestToJoinCommunity,
+  spectateCommunity,
+  sendChatMessage,
+  isReply,
+  getContacts,
+  acceptContactRequest,
+  sendContactRequest,
+  ChatType,
+  CommunityAccessValue,
+  TokenPermissionType,
+  isChannel,
+  isCommunityChat,
+  isDirectMessage,
+} from './messaging';
 
 export interface MarketCoin {
   id: string;

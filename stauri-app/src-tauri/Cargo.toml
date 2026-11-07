@@ -41,6 +41,29 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "ans
 tracing-appender = "0.2.5"
 tauri-plugin-updater = "2"
 
+# Разбор ссылок-приглашений Status (src/invite.rs).
+#
+# Ссылка на канал несёт brotli-сжатый protobuf, а в webview brotli не
+# декодируется: DecompressionStream в Chromium знает только gzip и deflate.
+# Версия 9 уже есть в кэше зависимостей (приходит транзитивно), поэтому
+# сборка не требует сети.
+base64 = "0.22"
+brotli-decompressor = "6.0"
+
+# Внешние источники (src/providers.rs): разбор RSS/Atom и страниц Telegram.
+# Версии уже лежат в кэше зависимостей, поэтому сборка идёт офлайн.
+quick-xml = "0.42"
+regex = "1"
+url = "2"
+
+# Открытие внешних ссылок системным обработчиком (src/opener.rs).
+#
+# Через плагин `shell` это требует разрешения `shell:allow-open` в
+# capabilities, то есть права открывать произвольные адреса из webview. Здесь
+# адрес проверяется в Rust, а системе передаётся уже проверенный.
+# Уже в дереве как транзитивная зависимость `tauri-plugin-shell`.
+open = "5"
+
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
 [profile.release]
 codegen-units = 1

@@ -320,4 +320,169 @@ mod tests {
         let headers = parse_headers(head);
         assert!(!headers.contains_key(TOKEN_HEADER));
     }
+
+    // ---------------------------------------------------------------------
+    // Сквозные тесты
+    //
+    // Юнит-тесты выше проверяют разбор строк. Здесь проверяется то, ради
+    // чего прокси существует: без токена запрос не доходит до бэкенда, с
+    // токеном — доходит и получает ответ, а заголовок токена до бэкенда
+    // не доезжает.
+    // ---------------------------------------------------------------------
+
+    /// Поднимает фальшивый бэкенд и считает дошедшие до него запросы.
+    ///
+    /// Возвращает порт и счётчик: по нему проверяется, что отклонённый
+    /// прокси запрос до бэкенда НЕ дошёл.
+    async fn fake_backend() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind backend");
+        let port = listener.local_addr().expect("backend addr").port();
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_task = hits.clone();
+
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                let hits = hits_for_task.clone();
+                tokio::spawn(async move {
+                    let mut buf = Vec::new();
+                    let mut chunk = [0u8; 1024];
+                    loop {
+                        match socket.read(&mut chunk).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => {
+                                buf.extend_from_slice(&chunk[..n]);
+                                if find_subsequence(&buf, b"\r\n\r\n").is_some() {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    let request = String::from_utf8_lossy(&buf).to_string();
+                    // Заголовок токена не должен доходить до бэкенда.
+                    if !request.to_ascii_lowercase().contains(TOKEN_HEADER) {
+                        hits.fetch_add(1, Ordering::SeqCst);
+                    }
+
+                    let body = r#"{"result":"ok"}"#;
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = socket.write_all(head.as_bytes()).await;
+                    let _ = socket.write_all(body.as_bytes()).await;
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+
+        (port, hits)
+    }
+
+    /// С правильным токеном запрос проходит и ответ возвращается клиенту.
+    #[tokio::test]
+    async fn valid_token_is_forwarded_to_backend() {
+        let (backend_port, _hits) = fake_backend().await;
+
+        let state = AuthProxyState::default();
+        let port = start(&state, backend_port).await.expect("proxy start");
+        let expected = token().expect("token");
+
+        let resp = reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{port}/statusgo/x"))
+            .header(TOKEN_HEADER, expected)
+            .body("{}")
+            .send()
+            .await
+            .expect("request through proxy");
+
+        assert_eq!(resp.status(), 200);
+        assert_eq!(resp.text().await.expect("body"), r#"{"result":"ok"}"#);
+
+        stop(&state);
+    }
+
+    /// Без токена — 403, и до бэкенда ничего не доходит.
+    #[tokio::test]
+    async fn missing_token_is_rejected_and_backend_untouched() {
+        let (backend_port, hits) = fake_backend().await;
+
+        let state = AuthProxyState::default();
+        let port = start(&state, backend_port).await.expect("proxy start");
+
+        let resp = reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{port}/statusgo/x"))
+            .body("{}")
+            .send()
+            .await
+            .expect("request through proxy");
+
+        assert_eq!(resp.status(), 403);
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "backend must not see unauthenticated requests"
+        );
+
+        stop(&state);
+    }
+
+    /// Неверный токен — тоже 403.
+    #[tokio::test]
+    async fn wrong_token_is_rejected() {
+        let (backend_port, hits) = fake_backend().await;
+
+        let state = AuthProxyState::default();
+        let port = start(&state, backend_port).await.expect("proxy start");
+
+        let resp = reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{port}/statusgo/x"))
+            .header(TOKEN_HEADER, "definitely-not-the-token")
+            .body("{}")
+            .send()
+            .await
+            .expect("request through proxy");
+
+        assert_eq!(resp.status(), 403);
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        stop(&state);
+    }
+
+    /// Заголовок токена не пересылается бэкенду.
+    ///
+    /// Проверяется отдельно от счётчика в fake_backend: там же ловится
+    /// и провал, поэтому нужен явный случай с успешным запросом.
+    #[tokio::test]
+    async fn token_header_is_stripped_before_forwarding() {
+        let head = "POST /x HTTP/1.1\r\nX-Stauri-Token: secret\r\nHost: h\r\n\r\n";
+        let stripped = strip_token_header(head);
+
+        assert!(!stripped.to_ascii_lowercase().contains(TOKEN_HEADER));
+        assert!(stripped.starts_with("POST /x HTTP/1.1\r\n"));
+        assert!(stripped.contains("Host: h\r\n"));
+    }
+
+    /// Разные токены различаются посимвольно, а не только по длине.
+    #[test]
+    fn token_comparison_rejects_prefix() {
+        let expected = "a".repeat(64);
+        let mut wrong = expected.clone();
+        wrong.pop();
+        wrong.push('b');
+
+        assert!(!constant_time_eq(wrong.as_bytes(), expected.as_bytes()));
+        // Совпадающий префикс не должен давать положительный результат.
+        assert!(!constant_time_eq(
+            &expected.as_bytes()[..63],
+            expected.as_bytes()
+        ));
+    }
 }

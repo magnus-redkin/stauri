@@ -33,7 +33,7 @@
     <input bind:value={searchQuery} placeholder={i18n.t('Search by name or key')} class="w-full h-9 border border-input rounded-md px-3 text-sm bg-background" />
   </div>
 
-  <ScrollArea class="flex-1">
+  <ScrollArea class="flex-1 min-h-0">
     {#if contactsState.isLoading}
       <p class="p-4 text-muted-foreground text-sm">{i18n.t('Loading contacts...')}</p>
     {:else if filteredContacts.length === 0}

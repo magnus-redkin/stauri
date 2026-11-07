@@ -1,15 +1,19 @@
 <script lang="ts">
   import { i18n } from '$lib/i18n';
-  import { walletState, loadWallet } from '$lib/stores/walletStore.svelte';
+  import { walletState, refreshWallet } from '$lib/stores/walletStore.svelte';
+  import { walletView, selectWalletTab, type WalletTab } from '$lib/stores/walletView.svelte';
   import WalletAssetsTab from './tabs/WalletAssetsTab.svelte';
   import WalletSendTab from './tabs/WalletSendTab.svelte';
   import WalletReceiveTab from './tabs/WalletReceiveTab.svelte';
   import WalletBuyTab from './tabs/WalletBuyTab.svelte';
   import WalletSwapTab from './tabs/WalletSwapTab.svelte';
+  import WalletAccountsTab from './tabs/WalletAccountsTab.svelte';
 
-  type WalletTab = 'assets' | 'send' | 'receive' | 'buy' | 'swap';
-
-  let activeTab = $state<WalletTab>('assets');
+  /**
+   * Вкладка живёт в сторе, а не здесь: её переключает ещё и ссылка
+   * «Управление аккаунтами» в левой панели (см. `walletView.svelte.ts`).
+   */
+  const activeTab = $derived(walletView.activeTab);
 
   const tabs: { id: WalletTab; label: string; disabled?: boolean }[] = [
     { id: 'assets', label: i18n.t('Assets') },
@@ -21,11 +25,11 @@
 
   function selectTab(tab: (typeof tabs)[number]) {
     if (tab.disabled) return;
-    activeTab = tab.id;
+    selectWalletTab(tab.id);
   }
 
   async function refresh() {
-    await loadWallet(true);
+    await refreshWallet();
   }
 </script>
 
@@ -40,12 +44,21 @@
         </div>
       {/if}
     </div>
+    <!--
+      «Обновить» запускает полный перезапрос балансов в бэкенде
+      (`wallet_restartWalletReloadTimer`) и перечитывает кэш через паузу.
+      Раньше здесь стоял `loadWallet(true)`, который только перечитывал
+      кэш: `forceRefresh` в status-go игнорируется, поэтому числа не менялись
+      и кнопка выглядела нерабочей.
+    -->
     <button
       onclick={refresh}
-      class="p-2 rounded-md border border-border hover:bg-secondary transition-colors"
-      title={i18n.t('Refresh')}
+      disabled={walletState.isRefreshing}
+      class="p-2 rounded-md border border-border hover:bg-secondary transition-colors disabled:opacity-50"
+      title={walletState.isRefreshing ? i18n.t('Refreshing...') : i18n.t('Refresh')}
+      aria-label={i18n.t('Refresh')}
     >
-      🔄
+      <span class={walletState.isRefreshing ? 'inline-block animate-spin' : 'inline-block'}>🔄</span>
     </button>
   </div>
 
@@ -80,6 +93,8 @@
       <WalletBuyTab />
     {:else if activeTab === 'swap'}
       <WalletSwapTab />
+    {:else if activeTab === 'accounts'}
+      <WalletAccountsTab />
     {/if}
   </div>
 </div>

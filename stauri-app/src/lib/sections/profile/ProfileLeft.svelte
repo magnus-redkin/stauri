@@ -42,7 +42,7 @@
     {i18n.t('Profile')}
   </div>
 
-  <ScrollArea class="flex-1 overflow-x-hidden">
+  <ScrollArea class="flex-1 min-h-0 overflow-x-hidden">
     <!-- Connect Info -->
     <div class="p-4 border-b border-border bg-secondary/30">
       {#if statusState.isConnecting}
@@ -64,10 +64,10 @@
 
         <!-- Profile ID -->
         <div class="mt-3">
-          <div class="text-[12px] font-bold text-muted-foreground uppercase">Profile ID</div>
+          <div class="text-[0.75rem] font-bold text-muted-foreground uppercase">Profile ID</div>
           <button
             onclick={copyProfileId}
-            class="mt-0.5 text-[12px] font-mono text-muted-foreground text-left hover:text-primary transition-colors cursor-pointer"
+            class="mt-0.5 text-[0.75rem] font-mono text-muted-foreground text-left hover:text-primary transition-colors cursor-pointer"
             title={i18n.t('Click to copy')}
           >
             {statusState.accountKeyUid ? statusState.accountKeyUid.substring(0, 6) + '...' : '...'}
@@ -77,10 +77,10 @@
 
         <!-- Public Key -->
         <div class="mt-2">
-          <div class="text-[12px] font-bold text-muted-foreground uppercase">Public Key (for chat)</div>
+          <div class="text-[0.75rem] font-bold text-muted-foreground uppercase">Public Key (for chat)</div>
           <button
             onclick={copyPubKey}
-            class="mt-0.5 text-[12px] font-mono text-muted-foreground text-left hover:text-primary transition-colors cursor-pointer"
+            class="mt-0.5 text-[0.75rem] font-mono text-muted-foreground text-left hover:text-primary transition-colors cursor-pointer"
             title={i18n.t('Click to copy')}
           >
             {statusState.publicKey ? statusState.publicKey.substring(0, 6) + '...' : '(loading...)'}

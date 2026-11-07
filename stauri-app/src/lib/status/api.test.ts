@@ -121,4 +121,43 @@ describe('Status API', () => {
       await expect(api.startMessenger(8080)).rejects.toThrow('Network error');
     });
   });
+
+  describe('sendChatMessage и комментарии', () => {
+    beforeEach(() => {
+      vi.mocked(http.statusFetch).mockResolvedValue({});
+    });
+
+    it('отправляет обычное сообщение с пустым responseTo', async () => {
+      await api.sendChatMessage(8080, 'status', 'hi');
+
+      const body = vi.mocked(http.statusFetch).mock.calls[0][2] as any;
+      expect(body.params[0]).toMatchObject({
+        chatId: 'status',
+        text: 'hi',
+        contentType: 1,
+        responseTo: '',
+      });
+    });
+
+    it('передаёт responseTo на верхнем уровне объекта', async () => {
+      // Message.UnmarshalJSON читает поле именно с верхнего уровня:
+      // `ResponseTo string \`json:"responseTo"\`` в aux-структуре.
+      await api.sendChatMessage(8080, 'status', 'comment', '', '0xparent');
+
+      const body = vi.mocked(http.statusFetch).mock.calls[0][2] as any;
+      expect(body.params[0].responseTo).toBe('0xparent');
+      // Не вложено в payload и не в chatId.
+      expect(body.params[0].chatId).toBe('status');
+    });
+  });
+
+  describe('isReply', () => {
+    it('различает запись и комментарий по responseTo', () => {
+      expect(api.isReply({ responseTo: '0xparent' })).toBe(true);
+      expect(api.isReply({ responseTo: '' })).toBe(false);
+      expect(api.isReply({})).toBe(false);
+      expect(api.isReply(null)).toBe(false);
+      expect(api.isReply(undefined)).toBe(false);
+    });
+  });
 });

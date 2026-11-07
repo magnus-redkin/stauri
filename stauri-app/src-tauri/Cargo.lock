@@ -3891,9 +3891,14 @@ dependencies = [
 name = "tauri-app"
 version = "0.2.0"
 dependencies = [
+ "base64 0.22.1",
+ "brotli-decompressor",
  "dirs 5.0.1",
  "dotenv",
  "once_cell",
+ "open",
+ "quick-xml",
+ "regex",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
@@ -3907,6 +3912,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

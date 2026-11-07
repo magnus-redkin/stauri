@@ -20,13 +20,18 @@ use tauri::Manager;
 mod auth_proxy;
 mod commands;
 mod config;
+mod dapp;
 mod env;
 mod error;
+mod invite;
 mod logging;
 mod market;
+mod opener;
+mod providers;
 mod rpc_proxy;
 mod seed;
 mod sidecar;
+mod transfer;
 mod updater;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -56,18 +61,25 @@ pub fn run() {
             commands::start_backend,
             commands::stop_backend,
             commands::start_rpc_proxy,
+            commands::rpc_proxy_secret,
             commands::set_rpc_upstreams,
             commands::stop_rpc_proxy,
             commands::auth_proxy_token,
             commands::check_for_update,
             commands::install_update,
             commands::restart_app,
+            commands::log_frontend,
             market::fetch_market_data,
             seed::fetch_seed_phrase,
             seed::seed_word,
             seed::seed_challenge,
             seed::verify_seed_answer,
-            seed::clear_seed
+            seed::clear_seed,
+            invite::parse_invite_link,
+            providers::fetch_feed,
+            opener::open_external,
+            dapp::open_dapp,
+            transfer::send_transfer
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

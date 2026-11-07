@@ -16,8 +16,8 @@ vi.mock('$lib/stores/chatsStore.svelte', async (importOriginal) => {
 describe('ChatLeft', () => {
   beforeEach(() => {
     chatsState.items = [
-      { id: '0x123', name: 'Alice Chat', lastMessage: 'Hello', type: 'status' },
-      { id: '0x456', name: 'Bob Chat', lastMessage: 'World', type: 'status', isPendingRequest: true },
+      { id: '0x123', name: 'Alice Chat', lastMessage: 'Hello', type: 'direct' },
+      { id: '0x456', name: 'Bob Chat', lastMessage: 'World', type: 'direct', isPendingRequest: true },
     ];
     chatsState.isLoading = false;
   });
@@ -31,12 +31,27 @@ describe('ChatLeft', () => {
 
   it('должен фильтровать чаты по поиску', async () => {
     render(ChatLeft, { props: {} });
-    const searchInput = screen.getByPlaceholderText(/Search chats/i);
+    // Одно поле на два действия: ввод фильтрует список, ссылка — подключает.
+    const searchInput = screen.getByPlaceholderText(/Search or paste invite link/i);
 
     await fireEvent.input(searchInput, { target: { value: 'Alice' } });
 
     expect(screen.getByText('Alice Chat')).toBeInTheDocument();
     expect(screen.queryByText('Bob Chat')).not.toBeInTheDocument();
+  });
+
+  it('фильтрует по имени сообщества, а не только канала', async () => {
+    chatsState.items = [
+      { id: '0xcommgeneral', name: 'general', lastMessage: '', type: 'community', communityId: '0xcomm', communityName: 'My Community' },
+      { id: '0xdm', name: 'Alice', lastMessage: '', type: 'direct' },
+    ];
+    render(ChatLeft, { props: {} });
+
+    const searchInput = screen.getByPlaceholderText(/Search or paste invite link/i);
+    await fireEvent.input(searchInput, { target: { value: 'My Community' } });
+
+    expect(screen.getByText('general')).toBeInTheDocument();
+    expect(screen.queryByText('Alice')).not.toBeInTheDocument();
   });
 
   it('должен отображать иконку pending-запроса', () => {

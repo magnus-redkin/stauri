@@ -6,7 +6,8 @@ import {
   getAccounts,
   getBalances,
   getTokensForActiveNetworksMode,
-} from '$lib/status/api';
+  restartWalletReloadTimer,
+} from '$lib/status/wallet';
 
 export type WalletToken = {
   symbol: string;
@@ -19,6 +20,11 @@ export type WalletToken = {
 
 export const walletState = $state({
   isLoading: false,
+  /**
+   * Идёт пользовательское «обновить». Отдельно от `isLoading`: обычный опрос
+   * идёт постоянно, и показывать по нему спиннер в шапке было бы шумно.
+   */
+  isRefreshing: false,
   error: '',
   loaded: false,
   address: '',
@@ -125,6 +131,21 @@ export async function loadWallet(force = false) {
     const addresses: string[] = accounts
       .filter((a: any) => a && a.address && !a.chat)
       .map((a: any) => String(a.address));
+
+    // Список показывается на экране «Управление аккаунтами». Раньше поле
+    // `accounts` объявлялось, но никто его не заполнял, поэтому экрана
+    // аккаунтов не было вовсе — ссылка в левой панели вела в профиль Stauri.
+    walletState.accounts = accounts
+      .filter((a: any) => a && a.address && !a.chat)
+      .map((a: any) => ({
+        address: String(a.address),
+        name: a.name || '',
+        path: a.path || '',
+        color: a.color || '',
+        // Адрес для чатов (`chat = true`) отфильтрован выше: у него нет
+        // кошелька, и в списке он выглядел бы как аккаунт без баланса.
+        publicKey: a.publicKey || '',
+      }));
 
     walletState.address = addresses[0] || '';
     if (addresses.length === 0) throw new Error('Wallet address not found');
@@ -257,6 +278,53 @@ export function stopWalletPolling() {
   }
 }
 
+/**
+ * Пользовательское «обновить сейчас».
+ *
+ * ## Почему просто `loadWallet(true)` не работало
+ *
+ * `loadWallet(true)` перечитывает кэш бэкенда, но не наполняет его:
+ * `forceRefresh` в `wallet_fetchOrGetCachedWalletBalances` игнорируется
+ * (см. комментарий в `status/wallet.ts`). Поэтому нажатие кнопки на экране
+ * кошелька давало те же числа — выглядело как «кнопка ничего не делает».
+ *
+ * Работающий путь — `wallet_restartWalletReloadTimer`: он запускает полный
+ * перезапрос в фоне. Ответ приходит сразу, а цифры в кэше появляются через
+ * несколько секунд, поэтому перечитываем не один раз, а ещё и с задержкой.
+ * Задержка фиксированная и короткая: ждать подтверждения от бэкенда нечем —
+ * сигнала об обновлении балансов нет.
+ */
+export async function refreshWallet(): Promise<void> {
+  if (!statusState.backendPort || walletState.isLoading) return;
+
+  walletState.isRefreshing = true;
+  try {
+    await restartWalletReloadTimer(statusState.backendPort);
+    // Даём контроллеру время сходить в сети, затем перечитываем кэш.
+    await new Promise((r) => setTimeout(r, REFRESH_SETTLE_MS));
+    await loadWallet(true);
+    // Второе чтение: контроллер наполняет кэш по сетям поочерёдно, и
+    // одного раза хватает не всегда — на медленной сети часть токенов
+    // ещё старая.
+    await new Promise((r) => setTimeout(r, REFRESH_SETTLE_MS));
+    await loadWallet(true);
+  } catch (e) {
+    debug('[walletStore] refresh failed:', e);
+    walletState.error = formatError(e, 'Failed to refresh balances');
+  } finally {
+    walletState.isRefreshing = false;
+  }
+}
+
+/**
+ * Сколько ждать после запуска перезапроса, прежде чем читать кэш.
+ *
+ * Значение выбрано по поведению контроллера: он опрашивает сети
+ * параллельно, и на публичных RPC ответ приходит за 1–3 с. Ждать дольше —
+ * держать пользователя у спиннера без пользы.
+ */
+const REFRESH_SETTLE_MS = 1500;
+
 export function resetWallet() {
   stopWalletPolling();
   cachedMetadata = null;
@@ -264,6 +332,7 @@ export function resetWallet() {
   walletState.error = '';
   walletState.rpcError = '';
   walletState.loaded = false;
+  walletState.isRefreshing = false;
   walletState.address = '';
   walletState.balances = [];
 }

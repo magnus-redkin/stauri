@@ -28,6 +28,7 @@ import {
   startMessenger,
   logout as apiLogout,
 } from '$lib/status/api';
+import { ensureTestNetworkMode } from '$lib/status/wallet';
 import { configureWalletRpc } from './rpcConfig';
 import { isWsOpen, openWs, closeWs } from './ws';
 
@@ -86,6 +87,11 @@ export async function connect(network?: string) {
     // RPC-клиенты status-go кэшируются по chainID и не инвалидируются,
     // поэтому если клиент создан раньше (например, messenger'ом или
     // фоновым refresher'ом), смена провайдера уже не подействует.
+    //
+    // Режим тестовых сетей здесь выставить НЕЛЬЗЯ: `settings_*`
+    // регистрируется в initServices, то есть после старта ноды, а нода
+    // стартует внутри LoginAccount. Переключение режима сделано в `login()`
+    // и `createAccount()` — см. `applyNetworkMode`.
     await configureWalletRpc(backendInfo.authPort);
 
     // FIX: Блок preferences_set удалён отсюда.
@@ -152,6 +158,49 @@ async function restartNodeForProviders(password: string, keyUid: string): Promis
 }
 
 /**
+ * Приводит режим сетей (mainnet / testnet) к тому, который задан запуском.
+ *
+ * ## Зачем это нужно
+ *
+ * `STAURI_NETWORK` — конфиг Rust: какая сеть основная, какой waku-fleet и
+ * какой каталог данных. Самому status-go он ничего не говорит: там есть
+ * отдельный флаг `test-networks-enabled?`, и `networks.GetActiveNetworks()`
+ * фильтрует сети по нему. Пока флаг не выставлен, профиль, запущенный как
+ * «sepolia», считает балансы по mainnet-сетям (1, 10, 56, 8453, 42161) —
+ * и пользователь видит нули вместо сеполовских активов.
+ *
+ * ## Почему здесь, а не в `connect()`
+ *
+ * `settings_*` регистрируется в `initServices`, то есть после старта ноды, а
+ * нода стартует внутри `loginAccount`. До входа вызов отвечает «method not
+ * found» — ровно как `networks_*`.
+ *
+ * ## Что возвращаем
+ *
+ * `true`, если флаг пришлось переписать. Смена режима меняет набор активных
+ * сетей, а RPC-клиенты бэкенда кэшированы по chainID (см.
+ * `restartNodeForProviders`), поэтому вызывающий код должен перезапустить
+ * ноду — иначе балансы придут по прежним сетям.
+ */
+async function applyNetworkMode(port: number): Promise<boolean> {
+  try {
+    const changed = await ensureTestNetworkMode(port, statusState.isTestnet);
+    if (changed) {
+      debug(
+        `[connect] test networks mode switched to ${statusState.isTestnet ? 'on' : 'off'}`
+      );
+    }
+    return changed;
+  } catch (e) {
+    // Не валим вход: кошелёк покажет то, что считает бэкенд, и это видно
+    // на экране «Активы». Сообщение объясняет, почему числа не те.
+    statusState.errorMsg = `Failed to set network mode: ${formatError(e)}`;
+    console.error('[connect] ensureTestNetworkMode failed:', e);
+    return false;
+  }
+}
+
+/**
  * Вход в аккаунт.
  *
  * Порядок важен: сначала прописываем RPC-провайдеры (configureWalletRpc),
@@ -171,8 +220,11 @@ export async function login(password: string, keyUid: string) {
   await loginAccount(port, password, keyUid);
   await waitForLogin(30000);
 
+  // Режим сетей — до провайдеров: он определяет, для каких сетей их писать.
+  const modeChanged = await applyNetworkMode(port);
+
   const { wroteProviders } = await configureWalletRpc(port);
-  if (wroteProviders && (await restartNodeForProviders(password, keyUid))) return;
+  if ((modeChanged || wroteProviders) && (await restartNodeForProviders(password, keyUid))) return;
 
   await startMessenger(port);
 }
@@ -194,8 +246,9 @@ export async function createAccount(password: string) {
   await waitForLogin(30000);
 
   const keyUid = statusState.accountKeyUid;
+  const modeChanged = await applyNetworkMode(port);
   const { wroteProviders } = await configureWalletRpc(port);
-  if (wroteProviders && (await restartNodeForProviders(password, keyUid))) return;
+  if ((modeChanged || wroteProviders) && (await restartNodeForProviders(password, keyUid))) return;
 
   await startMessenger(port);
 }

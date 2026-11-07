@@ -51,6 +51,26 @@ pub async fn start_rpc_proxy(
     rpc_proxy::start(&state, upstreams).await
 }
 
+/// Секрет, который обязан быть в пути каждого запроса к форвардеру.
+///
+/// ## Зачем он нужен и почему в пути
+///
+/// В форвардер ходит `status-go`, а не наш фронтенд: URL провайдера
+/// записывается через `networks_setChainUserRpcProviders` и используется
+/// внутри ноды. Заголовок `X-Stauri-Token` нода не пошлёт, поэтому секрет
+/// живёт в самом URL — единственном, что мы можем туда передать.
+///
+/// Без него любой процесс на машине (и любой сайт, открытый в WebView dApp)
+/// мог обратиться к `127.0.0.1:<port>/1` и получить доступ к RPC: до этой
+/// правки такой запрос отвечал `HTTP 200`.
+///
+/// Возвращает `None`, если форвардер ещё не запущен.
+#[tauri::command]
+pub fn rpc_proxy_secret(app: tauri::AppHandle) -> AppResult<Option<String>> {
+    let state = app.state::<rpc_proxy::RpcProxyState>();
+    Ok(state.secret())
+}
+
 /// Задаёт, куда проксировать запросы для каждой сети.
 /// `upstreams` — map chainId -> URL провайдера.
 #[tauri::command]
@@ -99,4 +119,46 @@ pub async fn install_update(app: tauri::AppHandle) -> AppResult<()> {
 pub fn restart_app(app: tauri::AppHandle) {
     tracing::info!("restart requested by user");
     app.request_restart();
+}
+
+/// Принимает строку лога из webview и пишет её в общий файл.
+///
+/// ## Зачем
+///
+/// В release-сборке фронтенд ничего не писал: `debug`/`log` в
+/// `src/lib/utils/log.ts` — пустые функции, `console.*` вырезается бандлером,
+/// а stdout webview пользователь не видит. В результате разбор любой проблемы
+/// упирался в «ничего нет в логе» — именно так и вышло при первой попытке
+/// вступить в канал.
+///
+/// Теперь фронтенд присылает сообщения сюда, а `logging.rs` пишет их в тот же
+/// файл, что и Rust. Уровень передаётся строкой (`debug`/`info`/`warn`/
+/// `error`): фронтенд не должен знать про `tracing::Level`.
+///
+/// ## Почему это включается флагом
+///
+/// Каждый вызов — это IPC-переход и запись на диск. Для отладки нормально,
+/// для повседневной работы избыточно. Флаг `VITE_DEBUG_LOG=1` во время сборки
+/// фронтенда включает отправку; выключенный флаг означает, что webview
+/// не делает ни одного такого вызова.
+///
+/// Защиту от утечек выполняет `RedactingWriter` в `logging.rs`: ключи и токены
+/// вычищаются на записи независимо от того, кто сформировал строку.
+#[tauri::command]
+pub fn log_frontend(level: String, message: String) {
+    // Сообщение приходит из webview, то есть является недоверенным. Ограничиваем
+    // длину, чтобы одна строка не раздувала лог, и убираем переводы строк,
+    // которые могли бы подделать формат записи.
+    let message: String = message
+        .chars()
+        .filter(|c| *c != '\n' && *c != '\r')
+        .take(4096)
+        .collect();
+
+    match level.as_str() {
+        "error" => tracing::error!(target: "frontend", "{message}"),
+        "warn" => tracing::warn!(target: "frontend", "{message}"),
+        "info" => tracing::info!(target: "frontend", "{message}"),
+        _ => tracing::debug!(target: "frontend", "{message}"),
+    }
 }

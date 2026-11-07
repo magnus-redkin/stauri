@@ -3,6 +3,14 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
   import { walletState } from '$lib/stores/walletStore.svelte';
   import { formatBalance } from '$lib/utils/format';
+  import {
+    groupAssets,
+    chainGroup,
+    normalizeSymbol,
+    groupLabel,
+    CHAIN_NAMES,
+    type AssetGroup,
+  } from '$lib/utils/assetGroups';
 
   import ethIcon from 'cryptocurrency-icons/svg/color/eth.svg?url';
   import bnbIcon from 'cryptocurrency-icons/svg/color/bnb.svg?url';
@@ -31,9 +39,8 @@
     return null;
   }
 
-  // Все сети, где токен считается «одной группой»
-  const EVM_CHAINS = new Set([1, 10, 42161, 8453]);
-  const BSC_CHAINS = new Set([56, 97]);
+  // Состав групп (`EVM`, `BSC`, отдельная сеть) живёт в `utils/assetGroups`:
+  // там же объяснено, почему тестовые сети нельзя складывать с mainnet.
 
   const CHAIN_PRIORITY: Record<number, number> = {
     1: 0,
@@ -58,12 +65,6 @@
     42161: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/arbitrum/info/logo.png',
     8453: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/base/info/logo.png',
   };
-
-  function chainGroup(chainId: number): string {
-    if (EVM_CHAINS.has(chainId)) return 'EVM';
-    if (BSC_CHAINS.has(chainId)) return 'BSC';
-    return 'OTHER'; // вместо String(chainId) — всё неизвестное в одну группу
-  }
 
   function tokenIconUrl(chainId: number, tokenAddress: string): string | null {
     const chainSlug = TRUSTWALLET_CHAIN[chainId];
@@ -128,88 +129,59 @@
     }
   }
 
-  type Group = {
-    key: string;
-    symbol: string;
-    decimals: number;
-    totalBalance: bigint;
-    chains: number[];
-    hasError: boolean;
-    fallbackIconUrl: string | null;
-  };
+  /**
+   * Группировка вынесена в `$lib/utils/assetGroups`.
+   *
+   * Здесь она жила inline и складывала все неизвестные сети в одну группу
+   * `OTHER`. В mainnet это было незаметно, а в testnet давало ровно 4 строки
+   * вместо записей по каждой сети: пять тестовых ETH суммировались в один.
+   * Логика, которая решает, что считать одним активом, должна быть покрыта
+   * тестами — на код внутри компонента их не напишешь.
+   */
+  const groupedBalances = $derived(groupAssets(walletState.balances));
 
-  const groupedBalances = $derived.by(() => {
-    // Локальные карты пересоздаются на каждый пересчёт $derived.by и в
-    // реактивности не участвуют — SvelteMap здесь не нужен.
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity
-    const map = new Map<string, Group>();
-    // eslint-disable-next-line svelte/prefer-svelte-reactivity
-    const chainToAddress = new Map<string, Map<number, string>>();
-
-    for (const token of walletState.balances) {
-      // 🔥 Нормализация: обрезаем пробелы, приводим к верхнему регистру
-      const normalizedSymbol = String(token.symbol || '')
-            .replace(/[\u200B-\u200D\uFEFF]/g, '')  // zero-width
-            .trim()
-            .toUpperCase();
-      const key = `${normalizedSymbol}:${chainGroup(token.chainId)}`;
-      const raw = BigInt(token.balance || '0');
-      const existing = map.get(key);
-      if (existing) {
-        existing.totalBalance += raw;
-        if (!existing.chains.includes(token.chainId)) {
-          existing.chains.push(token.chainId);
-        }
-        existing.hasError = existing.hasError || token.hasError;
-      } else {
-        map.set(key, {
-          key,
-          symbol: normalizedSymbol,
-          decimals: token.decimals,
-          totalBalance: raw,
-          chains: [token.chainId],
-          hasError: token.hasError,
-          fallbackIconUrl: null,
-        });
-        chainToAddress.set(key, new Map());
-      }
-      chainToAddress.get(key)?.set(token.chainId, token.tokenAddress);
-    }
-
-    for (const [key, group] of map) {
-      const byChain = chainToAddress.get(key);
-      if (!byChain) continue;
-      const sorted = [...group.chains].sort(
-        (a, b) => (CHAIN_PRIORITY[a] ?? 99) - (CHAIN_PRIORITY[b] ?? 99)
-      );
-      for (const chainId of sorted) {
-        const addr = byChain.get(chainId);
-        if (!addr) continue;
-        const url = tokenIconUrl(chainId, addr);
-        if (url) {
-          group.fallbackIconUrl = url;
-          break;
-        }
+  /**
+   * Иконка для строки.
+   *
+   * У одного символа в разных сетях разные адреса контракта, поэтому иконку
+   * выбираем один раз: по сети с наибольшим приоритетом (mainnet раньше
+   * тестовых).
+   */
+  const groupIconUrls = $derived.by(() => {
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- локальная карта на время вызова
+    const icons = new Map<string, string>();
+    for (const g of groupedBalances) {
+      let bestPriority = Infinity;
+      for (const t of walletState.balances) {
+        if (normalizeSymbol(t.symbol) !== g.symbol) continue;
+        if (t.decimals !== g.decimals) continue;
+        if (chainGroup(t.chainId) !== g.group) continue;
+        const priority = CHAIN_PRIORITY[t.chainId] ?? 99;
+        if (priority >= bestPriority) continue;
+        const url = tokenIconUrl(t.chainId, t.tokenAddress);
+        if (!url) continue;
+        icons.set(g.key, url);
+        bestPriority = priority;
       }
     }
-
-    return Array.from(map.values()).sort((a, b) => {
-      const aZero = a.totalBalance === 0n ? 1 : 0;
-      const bZero = b.totalBalance === 0n ? 1 : 0;
-      if (aZero !== bZero) return aZero - bZero;
-      return a.symbol.localeCompare(b.symbol);
-    });
+    return icons;
   });
 
-  const rows = $derived(groupedBalances.map(g => ({
-    ...g,
-    symbolIcon: iconForSymbol(g.symbol),
-    cachedFallback: g.fallbackIconUrl ? iconCache.get(g.fallbackIconUrl) : undefined,
-  })));
+  const rows = $derived(
+    groupedBalances.map((g) => {
+      const iconUrl = groupIconUrls.get(g.key);
+      return {
+        ...g,
+        symbolIcon: iconForSymbol(g.symbol),
+        fallbackIconUrl: iconUrl ?? null,
+        cachedFallback: iconUrl ? iconCache.get(iconUrl) : undefined,
+      };
+    })
+  );
 
   $effect(() => {
-    for (const g of groupedBalances) {
-      if (iconForSymbol(g.symbol)) continue;
+    for (const g of rows) {
+      if (g.symbolIcon) continue;
       if (!g.fallbackIconUrl) continue;
       if (!iconCache.has(g.fallbackIconUrl)) {
         loadIcon(g.fallbackIconUrl);
@@ -217,15 +189,20 @@
     }
   });
 
-  function formatGroupBalance(g: Group): string {
-    if (g.totalBalance === 0n) return '0.00';
-    return formatBalance(g.totalBalance.toString(), g.decimals);
+  /**
+   * Имя сети для подписи под строкой.
+   *
+   * Раньше печатался номер (`Chains: 11155111`) — человек не должен помнить
+   * идентификаторы сетей. Неизвестную сеть показываем номером: лучше
+   * номер, чем ничего.
+   */
+  function chainName(chainId: number): string {
+    return CHAIN_NAMES[chainId] ?? String(chainId);
   }
 
-  function displayName(g: Group): string {
-    const group = g.key.split(':')[1];
-    if (group === 'EVM' || group === 'BSC') return `${g.symbol} (${group})`;
-    return g.symbol;
+  function formatGroupBalance(g: AssetGroup): string {
+    if (g.totalBalance === 0n) return '0.00';
+    return formatBalance(g.totalBalance.toString(), g.decimals);
   }
 </script>
 
@@ -241,7 +218,7 @@
   {/if}
 
   {#if !walletState.isLoading}
-    <ScrollArea class="flex-1">
+    <ScrollArea class="flex-1 min-h-0">
       {#if rows.length === 0}
         <p class="p-6 text-muted-foreground text-sm italic">{i18n.t('No balances found.')}</p>
       {:else}
@@ -262,13 +239,13 @@
                 </div>
                 <div class="min-w-0">
                   <div class="font-medium text-foreground truncate text-sm">
-                    {displayName(g)}
+                    {groupLabel(g)}
                   </div>
                   <div class="text-xs text-muted-foreground">
                     {#if g.hasError}
                       <span class="text-destructive">{i18n.t('RPC error')}</span>
                     {:else}
-                      {i18n.t('Chains')}: {g.chains.join(', ')}
+                      {i18n.t('Chains')}: {g.chains.map((id) => chainName(id)).join(', ')}
                     {/if}
                   </div>
                 </div>

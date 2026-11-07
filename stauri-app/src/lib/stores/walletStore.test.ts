@@ -1,14 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { walletState, loadWallet, resetWallet } from './walletStore.svelte';
 import { statusState } from './statusStore.svelte';
-import { startWallet, getAccounts, getBalances, getTokensForActiveNetworksMode } from '$lib/status/api';
+import { startWallet, getAccounts, getBalances, getTokensForActiveNetworksMode, restartWalletReloadTimer } from '$lib/status/wallet';
 
-// Мокаем API
-vi.mock('$lib/status/api', () => ({
+// Мокаем слой status-go для кошелька. Стор импортирует напрямую из
+// `wallet.ts` (обёртки переехали туда из `api.ts`), поэтому мок `api` его
+// больше не перехватывал — все вызовы уходили в настоящий `statusFetch`.
+vi.mock('$lib/status/wallet', () => ({
   startWallet: vi.fn(),
   getAccounts: vi.fn(),
   getBalances: vi.fn(),
   getTokensForActiveNetworksMode: vi.fn(),
+  restartWalletReloadTimer: vi.fn(),
 }));
 
 // Мокаем statusState

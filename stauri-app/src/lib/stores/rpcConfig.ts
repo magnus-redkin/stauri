@@ -13,6 +13,7 @@ import {
   setChainUserRpcProvider,
   startRpcProxy,
   setRpcUpstreams,
+  getRpcProxySecret,
 } from '$lib/status/api';
 import { PUBLIC_RPC, USER_PROVIDER_NAME, rpcUrlForChain } from '$lib/config/keys';
 
@@ -51,11 +52,16 @@ export async function configureWalletRpc(
   // чем status-go создаст RPC-клиенты: адрес провайдера уже лежит в БД
   // прошлым запуском, и клиент может обратиться к нему сразу.
   let proxyPort: number;
+  let proxySecret: string | null = null;
   try {
     // Таблица передаётся сразу с запуском: провайдер с прошлого запуска уже
     // указывает на этот порт, и первый же запрос приходит раньше, чем успела
     // бы выполниться отдельная команда set_rpc_upstreams.
     proxyPort = await startRpcProxy(PUBLIC_RPC);
+    // Секрет нужен для пути провайдера: в форвардер ходит status-go, а
+    // заголовок с токеном нода послать не может. Без секрета любой процесс
+    // на машине (и любой сайт в WebView dApp) получил бы доступ к RPC.
+    proxySecret = await getRpcProxySecret();
     debug(`[configureWalletRpc] rpc proxy on 127.0.0.1:${proxyPort}`);
   } catch (e: any) {
     // Порт форвардера фиксирован, потому что на него уже указывают провайдеры
@@ -112,7 +118,23 @@ export async function configureWalletRpc(
     if (!direct) continue;
 
     // Через форвардер идём, если он поднялся; иначе — напрямую.
-    const url = proxyPort ? `http://127.0.0.1:${proxyPort}/${chainId}` : direct;
+    //
+    // Путь обязательно содержит секрет: форвардер отклоняет запросы без него
+    // (отвечает 404, чтобы не выдавать своего присутствия). В форвардер ходит
+    // status-go, а не наш фронтенд, поэтому секрет в URL, а не в заголовке.
+    const url =
+      proxyPort && proxySecret
+        ? `http://127.0.0.1:${proxyPort}/${proxySecret}/${chainId}`
+        : direct;
+
+    if (proxyPort && !proxySecret) {
+      // Секрета нет, а форвардер поднялся — это несогласованное состояние:
+      // идти напрямую нельзя, клиент ноды всё равно смотрит на наш порт.
+      console.error(
+        '[configureWalletRpc] rpc proxy started without a secret; providers not updated'
+      );
+      continue;
+    }
 
     // Сверяемся по URL, а не только по имени: провайдер мог остаться от
     // прошлой конфигурации (например, с мёртвым на этой машине Alchemy),

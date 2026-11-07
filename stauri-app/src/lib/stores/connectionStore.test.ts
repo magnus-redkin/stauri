@@ -6,6 +6,7 @@ import {
   getFlatEthereumChains,
   setChainUserRpcProvider,
   startRpcProxy,
+  getRpcProxySecret,
   setRpcUpstreams,
   loginAccount,
   logout,
@@ -22,6 +23,7 @@ vi.mock('$lib/status/api', () => ({
   getFlatEthereumChains: vi.fn(),
   setChainUserRpcProvider: vi.fn(),
   startRpcProxy: vi.fn(),
+  getRpcProxySecret: vi.fn(),
   setRpcUpstreams: vi.fn(),
   startMessenger: vi.fn(),
   getAuthToken: vi.fn().mockResolvedValue('test-token'),
@@ -52,10 +54,25 @@ function network(chainId: number, name: string, overrides: Record<string, unknow
 
 const PROXY_PORT = 43057;
 
+/**
+ * Секрет пути форвардера.
+ *
+ * Форвардер отклоняет запросы без него (отвечает 404), поэтому URL провайдера
+ * обязан содержать секрет первым сегментом. Тесты фиксируют это в ожиданиях:
+ * иначе регрессия — «секрет снова пропал из URL» — прошла бы незамеченной.
+ */
+const PROXY_SECRET = 'deadbeefdeadbeefdeadbeefdeadbeef';
+
+/** URL провайдера в том виде, в каком его должна построить функция. */
+function proxyUrl(chainId: number): string {
+  return `http://127.0.0.1:${PROXY_PORT}/${PROXY_SECRET}/${chainId}`;
+}
+
 describe('configureWalletRpc', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (startRpcProxy as any).mockResolvedValue(PROXY_PORT);
+    (getRpcProxySecret as any).mockResolvedValue(PROXY_SECRET);
     (setRpcUpstreams as any).mockResolvedValue(undefined);
     (setChainUserRpcProvider as any).mockResolvedValue({ result: null });
   });
@@ -70,10 +87,10 @@ describe('configureWalletRpc', () => {
 
     expect(setChainUserRpcProvider).toHaveBeenCalledTimes(2);
     expect(setChainUserRpcProvider).toHaveBeenCalledWith(
-      12345, 1, 'stauri-rpc', `http://127.0.0.1:${PROXY_PORT}/1`
+      12345, 1, 'stauri-rpc', proxyUrl(1)
     );
     expect(setChainUserRpcProvider).toHaveBeenCalledWith(
-      12345, 42161, 'stauri-rpc', `http://127.0.0.1:${PROXY_PORT}/42161`
+      12345, 42161, 'stauri-rpc', proxyUrl(42161)
     );
   });
 
@@ -91,7 +108,7 @@ describe('configureWalletRpc', () => {
 
     expect(setChainUserRpcProvider).toHaveBeenCalledTimes(1);
     expect(setChainUserRpcProvider).toHaveBeenCalledWith(
-      12345, 1, 'stauri-rpc', `http://127.0.0.1:${PROXY_PORT}/1`
+      12345, 1, 'stauri-rpc', proxyUrl(1)
     );
   });
 
@@ -113,7 +130,7 @@ describe('configureWalletRpc', () => {
       network(1, 'Ethereum', {
         rpcProviders: [{
           type: 'user', name: 'stauri-rpc', enabled: true,
-          url: `http://127.0.0.1:${PROXY_PORT}/1`,
+          url: proxyUrl(1),
         }],
       }),
     ]);
@@ -136,7 +153,7 @@ describe('configureWalletRpc', () => {
     await configureWalletRpc(12345);
 
     expect(setChainUserRpcProvider).toHaveBeenCalledWith(
-      12345, 1, 'stauri-rpc', `http://127.0.0.1:${PROXY_PORT}/1`
+      12345, 1, 'stauri-rpc', proxyUrl(1)
     );
   });
 
@@ -163,7 +180,7 @@ describe('configureWalletRpc', () => {
       network(1, 'Ethereum', {
         rpcProviders: [{
           type: 'user', name: 'stauri-rpc', enabled: true,
-          url: `http://127.0.0.1:${PROXY_PORT}/1`,
+          url: proxyUrl(1),
         }],
       }),
     ]);
@@ -187,6 +204,7 @@ describe('перезапуск ноды после записи провайде
     statusState.backendPort = 12345;
     statusState.accountKeyUid = 'key-uid-1';
     (startRpcProxy as any).mockResolvedValue(PROXY_PORT);
+    (getRpcProxySecret as any).mockResolvedValue(PROXY_SECRET);
     (setRpcUpstreams as any).mockResolvedValue(undefined);
     (setChainUserRpcProvider as any).mockResolvedValue({ result: null });
     (loginAccount as any).mockResolvedValue({});
@@ -247,7 +265,7 @@ describe('перезапуск ноды после записи провайде
       network(1, 'Ethereum', {
         rpcProviders: [{
           type: 'user', name: 'stauri-rpc', enabled: true,
-          url: `http://127.0.0.1:${PROXY_PORT}/1`,
+          url: proxyUrl(1),
         }],
       }),
     ]);

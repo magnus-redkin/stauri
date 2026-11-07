@@ -64,10 +64,16 @@ pub fn init() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         // Чужой шум (tauri, reqwest, hyper) — только warn: их debug
         // утопил бы записи самого приложения.
+        //
+        // `frontend=` обязателен отдельно: сообщения из webview приходят с
+        // target "frontend" (см. commands::log_frontend) и под правило
+        // `tauri_app_lib=` не подпадают. Без него проходили только ERROR,
+        // потому что они выше порога `warn`, — именно так debug/info с
+        // фронтенда и потерялись при первой попытке.
         EnvFilter::new(if cfg!(debug_assertions) {
-            "warn,tauri_app_lib=debug"
+            "warn,tauri_app_lib=debug,frontend=debug,status_backend=debug"
         } else {
-            "warn,tauri_app_lib=info"
+            "warn,tauri_app_lib=info,frontend=debug,status_backend=info"
         })
     });
 

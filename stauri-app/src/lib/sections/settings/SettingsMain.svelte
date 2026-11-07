@@ -3,9 +3,24 @@
   import { getVersion } from "@tauri-apps/api/app";
   import { i18n } from "$lib/i18n";
   import { checkForUpdate, installUpdate, restartApp } from "$lib/stores/updater";
+  import {
+    uiState,
+    setFontSize,
+    setTheme,
+    FONT_MIN,
+    FONT_MAX,
+  } from "$lib/stores/uiStore.svelte";
 
-  let theme = $state('maroon');
-  let fontSize = $state('16');
+  /**
+   * Тема и размер шрифта живут в `uiStore`, а не здесь.
+   *
+   * Раньше они читались и применялись только этим экраном: до первого
+   * открытия Настроек интерфейс выглядел по умолчанию, хотя значение в
+   * `localStorage` уже было другим. Теперь применяет стор при старте, а
+   * экран только показывает и меняет текущее значение.
+   */
+  const theme = $derived(uiState.theme);
+  const fontSize = $derived(uiState.fontSize);
 
   /**
    * Состояние проверки обновлений.
@@ -28,8 +43,8 @@
   });
 
   onMount(() => {
-    theme = localStorage.getItem('stauri-theme') || 'maroon';
-    fontSize = localStorage.getItem('stauri-font-size') || '16';
+    // Тему и размер шрифта уже применил `loadUiPreferences` при старте, здесь
+    // их применять заново не нужно — только версия.
 
     // Версию берём из манифеста приложения, а не из package.json: в бандл
     // попадает значение из tauri.conf.json, и именно оно управляет тем,
@@ -86,25 +101,6 @@
     }
   }
 
-  function applyTheme(newTheme: string) {
-    theme = newTheme;
-    localStorage.setItem('stauri-theme', newTheme);
-
-    const html = document.documentElement;
-    html.classList.remove('dark');
-    html.setAttribute('data-theme', newTheme);
-
-    if (newTheme === 'dark') {
-      html.classList.add('dark');
-    }
-  }
-
-  function applyFontSize(size: string) {
-    fontSize = size;
-    localStorage.setItem('stauri-font-size', size);
-    document.documentElement.style.fontSize = `${size}px`;
-  }
-
   function changeLanguage(newLocale: string) {
     i18n.locale = newLocale;
     localStorage.setItem('stauri-locale', newLocale);
@@ -153,19 +149,19 @@
       <div class="flex gap-2">
         <button
           class="px-4 py-2 rounded-md border border-border {theme === 'maroon' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-secondary'}"
-          onclick={() => applyTheme('maroon')}
+          onclick={() => setTheme('maroon')}
         >
           {i18n.t('Maroon')}
         </button>
         <button
           class="px-4 py-2 rounded-md border border-border {theme === 'light' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-secondary'}"
-          onclick={() => applyTheme('light')}
+          onclick={() => setTheme('light')}
         >
           {i18n.t('Light')}
         </button>
         <button
           class="px-4 py-2 rounded-md border border-border {theme === 'dark' ? 'bg-primary text-primary-foreground' : 'bg-card hover:bg-secondary'}"
-          onclick={() => applyTheme('dark')}
+          onclick={() => setTheme('dark')}
         >
           {i18n.t('Dark')}
         </button>
@@ -178,10 +174,10 @@
       <div class="flex items-center gap-4">
         <input
           type="range"
-          min="12"
-          max="20"
-          bind:value={fontSize}
-          oninput={(e) => applyFontSize((e.target as HTMLInputElement).value)}
+          min={FONT_MIN}
+          max={FONT_MAX}
+          value={fontSize}
+          oninput={(e) => setFontSize(Number((e.target as HTMLInputElement).value))}
           class="w-full accent-primary"
         />
         <span class="font-mono text-sm">{fontSize}px</span>

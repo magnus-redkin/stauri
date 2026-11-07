@@ -51,8 +51,15 @@ export const PUBLIC_RPC: Record<number, string> = {
   56: 'https://bsc-rpc.publicnode.com',
   8453: 'https://base-rpc.publicnode.com',
   42161: 'https://arbitrum-one-rpc.publicnode.com',
-  11155111: 'https://ethereum-sepolia-rpc.publicnode.com',
+  // Тестовые сети. Нужны, потому что с включённым `test-networks-enabled?`
+  // status-go считает активными именно их, и без адреса сеть остаётся без
+  // провайдера — баланс по ней не приходит вовсе.
   97: 'https://bsc-testnet-rpc.publicnode.com',
+  11155111: 'https://ethereum-sepolia-rpc.publicnode.com',
+  11155420: 'https://optimism-sepolia-rpc.publicnode.com',
+  84532: 'https://base-sepolia-rpc.publicnode.com',
+  421614: 'https://arbitrum-sepolia-rpc.publicnode.com',
+  560048: 'https://ethereum-hoodi-rpc.publicnode.com',
 };
 
 /** Сетевые имена Alchemy — формат https://<host>.g.alchemy.com/v2/<key> */

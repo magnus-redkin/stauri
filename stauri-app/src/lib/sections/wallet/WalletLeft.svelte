@@ -3,8 +3,7 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
   import { Wallet, Pencil } from 'lucide-svelte';
   import { walletState } from '$lib/stores/walletStore.svelte';
-
-  let { onNavigate }: { onNavigate?: (section: string) => void } = $props();
+  import { selectWalletTab } from '$lib/stores/walletView.svelte';
 </script>
 
 <div class="flex flex-col h-full border-r border-border bg-card">
@@ -13,7 +12,7 @@
     <span class="font-bold text-lg text-primary">{i18n.t('Wallet')}</span>
   </div>
 
-  <ScrollArea class="flex-1">
+  <ScrollArea class="flex-1 min-h-0">
     <!-- Инфо об аккаунте -->
     <div class="p-4 border-b border-border bg-secondary/30">
       <div class="flex items-center justify-between">
@@ -35,9 +34,16 @@
         </div>
       {/if}
 
-      <!-- Manage accounts: иконка с карандашом + текст -->
+      <!--
+        «Управление аккаунтами» открывает вкладку аккаунтов кошелька.
+
+        Раньше кнопка вела в раздел профиля Stauri (`onNavigate('profile')`):
+        там меняются имя и аватар, а кошельков нет вовсе. Ссылка вела туда
+        только потому, что экрана аккаунтов не существовало — поле
+        `walletState.accounts` никто не заполнял.
+      -->
       <button
-        onclick={() => onNavigate?.('profile')}
+        onclick={() => selectWalletTab('accounts')}
         class="mt-4 w-full flex items-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors"
         title={i18n.t('Manage accounts')}
       >

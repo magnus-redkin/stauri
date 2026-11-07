@@ -1,6 +1,6 @@
 import { fetch as tauriFetch } from '@tauri-apps/plugin-http';
 import { invoke } from '@tauri-apps/api/core';
-import { debug } from '$lib/utils/log';
+import { debug, error } from '$lib/utils/log';
 
 /**
  * Клиент status-go RPC.
@@ -10,7 +10,9 @@ import { debug } from '$lib/utils/log';
  * в поле `mnemonic`, то есть фраза уходила в консоль webview при каждом
  * открытии экрана с ней.
  *
- * Осталось логирование только имён методов и, при ошибке, кода статуса.
+ * Осталось логирование имени метода, длительности и, при ошибке, кода
+ * статуса и текста ошибки (текст ошибки status-go не содержит данных
+ * профиля — он уходит в отдельное поле `error`).
  *
  * `port` — порт АУТЕНТИФИЦИРУЮЩЕГО ПРОКСИ, а не бэкенда. Прокси требует
  * заголовок с токеном и только после проверки пересылает запрос дальше.
@@ -25,10 +27,21 @@ async function token(): Promise<string> {
   return authToken;
 }
 
+/** Достаёт имя RPC-метода из тела — для лога. */
+function methodOf(body: any): string {
+  if (body && typeof body === 'object' && typeof body.method === 'string') {
+    return body.method;
+  }
+  return 'direct';
+}
+
 export async function statusFetch<T>(port: number, endpoint: string, body: any): Promise<T> {
   const url = `http://127.0.0.1:${port}/statusgo/${endpoint}`;
+  const method = methodOf(body);
+  const label = `${endpoint}/${method}`;
+  const started = performance.now();
 
-  debug(`[statusFetch] → ${endpoint} keys=${Object.keys(body || {}).join(',')}`);
+  debug(`[statusFetch] → ${label}`);
 
   const response = await tauriFetch(url, {
     method: 'POST',
@@ -39,17 +52,19 @@ export async function statusFetch<T>(port: number, endpoint: string, body: any):
     body: JSON.stringify(body)
   });
 
+  const ms = Math.round(performance.now() - started);
+
   // 1. Проверка HTTP-статуса.
   //    Тело ответа не печатаем и не вкладываем в текст ошибки: оно может
   //    содержать данные профиля. Оставляем только статус и длину.
   if (!response.ok) {
     const errorText = await response.text();
-    debug(`[statusFetch] ← ${endpoint} HTTP ${response.status} len=${errorText.length}`);
+    error(`[statusFetch] ← ${label} HTTP ${response.status} ${ms}ms len=${errorText.length}`);
     throw new Error(`HTTP ${response.status}`);
   }
 
   const text = await response.text();
-  debug(`[statusFetch] ← ${endpoint} status=${response.status} len=${text.length}`);
+  debug(`[statusFetch] ← ${label} ok ${ms}ms len=${text.length}`);
 
   // 2. Пустой ответ (например, LoginAccount) — это нормально
   if (!text || text.trim() === '') {
@@ -61,6 +76,7 @@ export async function statusFetch<T>(port: number, endpoint: string, body: any):
   try {
     data = JSON.parse(text);
   } catch (e) {
+    error(`[statusFetch] ← ${label} invalid JSON`);
     throw new Error(`Invalid JSON response from ${endpoint}`, { cause: e });
   }
 
@@ -76,7 +92,9 @@ export async function statusFetch<T>(port: number, endpoint: string, body: any):
       errorMessage = JSON.stringify(data.error);
     }
 
-    debug(`[statusFetch] ← ${endpoint} error`);
+    // Текст ошибки логируем целиком: в нём причина отказа бэкенда, без него
+    // разбор невозможен. Данных профиля в нём нет — они в `result`.
+    error(`[statusFetch] ← ${label} error: ${errorMessage}`);
     throw new Error(errorMessage);
   }
 
